@@ -1002,14 +1002,14 @@ void ScreenGameplay::SetupSong( int iSongIndex )
 		// load player
 		{
 			pi->m_NoteData = ndTransformed;
-			NoteDataUtil::RemoveAllTapsOfType( pi->m_NoteData, TapNote::autoKeysound );
+			NoteDataUtil::RemoveAllTapsOfType( pi->m_NoteData, TapNoteType_AutoKeySound );
 			pi->m_pPlayer->Load();
 		}
 
 		// load auto keysounds
 		{
 			NoteData nd = ndTransformed;
-			NoteDataUtil::RemoveAllTapsExceptForType( nd, TapNote::autoKeysound );
+			NoteDataUtil::RemoveAllTapsExceptForType( nd, TapNoteType_AutoKeySound );
 			m_AutoKeysounds.Load( pi->GetStepsAndTrailIndex(), nd );
 		}
 
@@ -1975,7 +1975,7 @@ void ScreenGameplay::UpdateLights()
 			// for each index we crossed since the last update:
 			FOREACH_NONEMPTY_ROW_IN_TRACK_RANGE( m_CabinetLightsNoteData, cl, r, iRowLastCrossed+1, iSongRow+1 )
 			{
-				if( m_CabinetLightsNoteData.GetTapNote( cl, r ).type != TapNote::empty )
+				if( m_CabinetLightsNoteData.GetTapNote( cl, r ).type != TapNoteType_Empty )
 					bBlinkCabinetLight[cl] = true;
 			}
 
@@ -1994,7 +1994,7 @@ void ScreenGameplay::UpdateLights()
 				FOREACH_NONEMPTY_ROW_IN_TRACK_RANGE( nd, t, r, iRowLastCrossed+1, iSongRow+1 )
 				{
 					const TapNote &tn = nd.GetTapNote( t, r );
-					if( tn.type != TapNote::mine )
+					if( tn.type != TapNoteType_Mine )
 						bBlink = true;
 				}
 
@@ -2091,7 +2091,7 @@ void ScreenGameplay::SendCrossedMessages()
 				int iNumTracksWithTapOrHoldHead = 0;
 				for( int t=0; t<nd.GetNumTracks(); t++ )
 				{
-					if( nd.GetTapNote(t,r).type == TapNote::empty )
+					if( nd.GetTapNote(t,r).type == TapNoteType_Empty )
 						continue;
 
 					iNumTracksWithTapOrHoldHead++;
@@ -2898,11 +2898,17 @@ public:
 		pSteps->PushSelf(L);
 		return 1;
 	}
+	static int GetNoteData( T* p, lua_State *L )
+	{
+		p->m_NoteData.PushSelf(L);
+		return 1;
+	}
 
 	LunaPlayerInfo()
 	{
 		ADD_METHOD( GetLifeMeter );
 		ADD_METHOD( GetStepsQueueWrapped );
+		ADD_METHOD( GetNoteData );
 	}
 };
 

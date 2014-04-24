@@ -37,7 +37,7 @@ void Style::GetTransformedNoteDataForStyle( PlayerNumber pn, const NoteData& ori
 {
 	ASSERT( pn >=0 && pn <= NUM_PLAYERS );
 
-	int iNewToOriginalTrack[MAX_COLS_PER_PLAYER];
+	vector<int> iNewToOriginalTrack(m_iColsPerPlayer);
 	for( int col=0; col<m_iColsPerPlayer; col++ )
 	{
 		ColumnInfo colInfo = m_ColumnInfo[pn][col];

@@ -228,6 +228,12 @@ void Steps::GetSMNoteData( RString &notes_comp_out ) const
 	notes_comp_out = m_sNoteDataCompressed;
 }
 
+NoteData& Steps::BreakEncapsulationOfNoteData()
+{
+	Decompress();
+	return *m_pNoteData;
+}
+
 float Steps::PredictMeter() const
 {
 	float pMeter = 0.775f;
@@ -656,6 +662,17 @@ public:
 		LuaHelpers::Push( L, p->GetDisplayBPM() );
 		return 1;
 	}
+	static int GetNoteData( T* p, lua_State *L )
+	{
+		NoteData& nd= p->BreakEncapsulationOfNoteData();
+		nd.PushSelf(L);
+		return 1;
+	}
+	static int ReleaseNoteData( T* p, lua_State *L )
+	{
+		p->Compress();
+		return 0;
+	}
 
 	LunaSteps()
 	{
@@ -682,6 +699,8 @@ public:
 		ADD_METHOD( IsDisplayBpmRandom );
 		ADD_METHOD( PredictMeter );
 		ADD_METHOD( GetDisplayBPMType );
+		ADD_METHOD( GetNoteData );
+		ADD_METHOD( ReleaseNoteData );
 	}
 };
 

@@ -136,6 +136,8 @@ public:
 	void SetSMNoteData( const RString &notes_comp );
 	void GetSMNoteData( RString &notes_comp_out ) const;
 
+	NoteData& BreakEncapsulationOfNoteData(); // To be used only to expose the NoteData for lua access.
+
 	/**
 	 * @brief Retrieve the NoteData from the original source.
 	 * @return true if successful, false for failure. */

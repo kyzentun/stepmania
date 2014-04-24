@@ -151,6 +151,18 @@ public:
 			return TAP_EMPTY;
 	}
 
+	inline const_iterator GetTapsEnd(unsigned track) const
+	{
+		return m_TapNotes[track].end();
+	}
+
+	inline const_reverse_iterator GetTapsREnd(unsigned track) const
+	{
+		return m_TapNotes[track].rend();
+	}
+
+	iterator row_to_iterator(int track, int row);
+	reverse_iterator row_to_reverse_iterator(int track, int row);
 
 	inline iterator FindTapNote( unsigned iTrack, int iRow )	{ return m_TapNotes[iTrack].find( iRow ); }
 	inline const_iterator FindTapNote( unsigned iTrack, int iRow ) const { return m_TapNotes[iTrack].find( iRow ); }
@@ -179,6 +191,7 @@ public:
 	 * @param begin the eventual beginning point of the range.
 	 * @param end the eventual end point of the range. */
 	void GetTapNoteRange( int iTrack, int iStartRow, int iEndRow, TrackMap::iterator &begin, TrackMap::iterator &end );
+	void GetTapNoteRangeReverse( int iTrack, int iStartRow, int iEndRow, TrackMap::reverse_iterator &rbegin, TrackMap::reverse_iterator &rend );
 	all_tracks_iterator GetTapNoteRangeAllTracks( int iStartRow, int iEndRow, bool bInclusive = false )
 	{
 		return all_tracks_iterator( *this, iStartRow, iEndRow, false, bInclusive );
@@ -241,7 +254,7 @@ public:
 	bool IsRangeEmpty( int track, int rowBegin, int rowEnd ) const;
 	int GetNumTapNonEmptyTracks( int row ) const;
 	void GetTapNonEmptyTracks( int row, set<int>& addTo ) const;
-	bool GetTapFirstNonEmptyTrack( int row, int &iNonEmptyTrackOut ) const;	// return false if no non-empty tracks at row
+	bool GetTapFirstNonEmptyTrack( int row, int &iEmptyTrackOut ) const;	// return false if no non-empty tracks at row
 	bool GetTapFirstEmptyTrack( int row, int &iEmptyTrackOut ) const;	// return false if no non-empty tracks at row
 	bool GetTapLastEmptyTrack( int row, int &iEmptyTrackOut ) const;	// return false if no empty tracks at row
 	int GetNumTracksWithTap( int row ) const;
@@ -249,6 +262,11 @@ public:
 	int GetFirstTrackWithTap( int row ) const;
 	int GetFirstTrackWithTapOrHoldHead( int row ) const;
 	int GetLastTrackWithTapOrHoldHead( int row ) const;
+
+	int GetNumTracksWithTapType( int row, TapNoteType type, bool invert=false ) const;
+	int GetNumTracksWithTapTypes( int row, vector<TapNoteType> const& types, bool invert=false ) const;
+	void GetTracksWithTapType(int row, TapNoteType type, vector<int>& out, bool invert=false) const;
+	void GetTracksWithTapTypes(int row, vector<TapNoteType> const& types, vector<int>& out, bool invert=false) const;
 
 	inline bool IsThereATapAtRow( int row ) const			{ return GetFirstTrackWithTap( row ) != -1; }
 	inline bool IsThereATapOrHoldHeadAtRow( int row ) const		{ return GetFirstTrackWithTapOrHoldHead( row ) != -1; }
@@ -333,11 +351,14 @@ public:
 	// Transformations
 	void LoadTransformed(const NoteData& original,
 						 int iNewNumTracks,
-						 const int iOriginalTrackToTakeFrom[] );	// -1 for iOriginalTracksToTakeFrom means no track
+						 vector<int> const& iOriginalTrackToTakeFrom );	// -1 for iOriginalTracksToTakeFrom means no track
 
 	// XML
 	XNode* CreateNode() const;
 	void LoadFromNode( const XNode* pNode );
+
+	// Lua
+	void PushSelf( lua_State *L );
 };
 
 /** @brief Allow a quick way to swap notedata. */

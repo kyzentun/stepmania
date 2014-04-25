@@ -4601,12 +4601,12 @@ void ScreenEdit::HandleAlterMenuChoice(AlterMenuChoice c, const vector<int> &iAn
 			switch( tt )
 			{
 				DEFAULT_FAIL( tt );
-				case left:		NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::left );		break;
-				case right:		NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::right );		break;
-				case mirror:		NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::mirror );		break;
-				case turn_backwards:		NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::backwards );		break;
-				case shuffle:		NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::shuffle );		break;
-				case super_shuffle:	NoteDataUtil::Turn( m_Clipboard, st, NoteDataUtil::super_shuffle );	break;
+				case left:		NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_Left );		break;
+				case right:		NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_Right );		break;
+				case mirror:		NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_Mirror );		break;
+				case turn_backwards:		NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_Backwards );		break;
+				case shuffle:		NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_Shuffle );		break;
+				case super_shuffle:	NoteDataUtil::Turn( m_Clipboard, st, TrackMapping_SuperShuffle );	break;
 			}
 			
 			HandleAreaMenuChoice( paste_at_begin_marker, false );

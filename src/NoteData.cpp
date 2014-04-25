@@ -1417,7 +1417,6 @@ template class NoteData::_all_tracks_iterator<const NoteData, NoteData::const_it
 // lua start
 #include "LuaBinding.h"
 // A little wrapper to allow beats on the lua side to use "-1" to mean MAX_NOTE_ROW.
-int LuaBeatToNoteRow(float beat); // prototype to silence compiler warnings.
 int LuaBeatToNoteRow(float beat)
 {
 	if(beat < 0.0f)

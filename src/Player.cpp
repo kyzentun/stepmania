@@ -680,11 +680,11 @@ void Player::Load()
 				{
 				case 0:
 				case 3:
-					NoteDataUtil::Turn( m_NoteData, st, NoteDataUtil::left);
+					NoteDataUtil::Turn( m_NoteData, st, TrackMapping_Left);
 					break;
 				case 1:
 				case 2:
-					NoteDataUtil::Turn( m_NoteData, st, NoteDataUtil::right);
+					NoteDataUtil::Turn( m_NoteData, st, TrackMapping_Right);
 					break;
 				default:
 					FAIL_M(ssprintf("Count %i not in range 0-3", count));

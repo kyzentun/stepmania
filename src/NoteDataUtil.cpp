@@ -10,11 +10,26 @@
 #include "RadarValues.h"
 #include "Foreach.h"
 #include "TimingData.h"
+#include "LocalizedString.h"
 #include <utility>
 
 // TODO: Remove these constants that aren't time signature-aware
 static const int BEATS_PER_MEASURE = 4;
 static const int ROWS_PER_MEASURE = ROWS_PER_BEAT * BEATS_PER_MEASURE;
+
+static const char *TrackMappingNames[] = {
+	"Left",
+	"Right",
+	"Mirror",
+	"Backwards",
+	"Shuffle",
+	"SoftShuffle",
+	"SuperShuffle",
+	"Stomp",
+};
+XToString( TrackMapping );
+XToLocalizedString( TrackMapping );
+LuaXType( TrackMapping );
 
 NoteType NoteDataUtil::GetSmallestNoteTypeForMeasure( const NoteData &nd, int iMeasureIndex )
 {
@@ -1135,7 +1150,7 @@ void NoteDataUtil::RemoveAllButPlayer( NoteData &inout, PlayerNumber pn )
 }
 
 // TODO: Perform appropriate matrix calculations for everything instead.
-static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int NumTracks, int *iTakeFromTrack )
+static void GetTrackMapping( StepsType st, TrackMapping tt, int NumTracks, int *iTakeFromTrack )
 {
 	// Identity transform for cases not handled below.
 	for( int t = 0; t < MAX_NOTE_TRACKS; ++t )
@@ -1143,8 +1158,8 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 
 	switch( tt )
 	{
-	case NoteDataUtil::left:
-	case NoteDataUtil::right:
+	case TrackMapping_Left:
+	case TrackMapping_Right:
 		// Is there a way to do this without handling each StepsType? -Chris
 		switch( st )
 		{
@@ -1205,7 +1220,7 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 		default: break;
 		}
 
-		if( tt == NoteDataUtil::right )
+		if( tt == TrackMapping_Right )
 		{
 			// Invert.
 			int iTrack[MAX_NOTE_TRACKS];
@@ -1218,7 +1233,7 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 		}
 
 		break;
-	case NoteDataUtil::backwards:
+	case TrackMapping_Backwards:
 	{
 		// If a Pump game type, treat differently. Otherwise, send to mirror.
 		bool needsBackwards = true;
@@ -1269,14 +1284,14 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 		}
 		if (needsBackwards) break;
 	}
-	case NoteDataUtil::mirror:
+	case TrackMapping_Mirror:
 		{
 			for( int t=0; t<NumTracks; t++ )
 				iTakeFromTrack[t] = NumTracks-t-1;
 			break;
 		}
-	case NoteDataUtil::shuffle:
-	case NoteDataUtil::super_shuffle:		// use shuffle code to mix up HoldNotes without creating impossible patterns
+	case TrackMapping_Shuffle:
+	case TrackMapping_SuperShuffle:		// use shuffle code to mix up HoldNotes without creating impossible patterns
 		{
 			// TRICKY: Shuffle so that both player get the same shuffle mapping
 			// in the same round.
@@ -1292,7 +1307,7 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 			while ( !memcmp( iOrig, iTakeFromTrack, sizeof(iOrig) ) );
 		}
 		break;
-	case NoteDataUtil::soft_shuffle:
+	case TrackMapping_SoftShuffle:
 		{
 			// XXX: this is still pretty much a stub.
 
@@ -1409,7 +1424,7 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 					}
 					break;
 				case 3: // full mirror
-					GetTrackMapping( st, NoteDataUtil::mirror, NumTracks, iTakeFromTrack );
+					GetTrackMapping( st, TrackMapping_Mirror, NumTracks, iTakeFromTrack );
 					break;
 				case 0:
 				default:
@@ -1418,7 +1433,7 @@ static void GetTrackMapping( StepsType st, NoteDataUtil::TrackMapping tt, int Nu
 			}
 		}
 		break;
-	case NoteDataUtil::stomp:
+	case TrackMapping_Stomp:
 		switch( st )
 		{
 		case StepsType_dance_single:
@@ -1536,14 +1551,14 @@ void NoteDataUtil::Turn( NoteData &inout, StepsType st, TrackMapping tt, int iSt
 	GetTrackMapping( st, tt, inout.GetNumTracks(), iTakeFromTrack );
 
 	vector<int> real_take_from(inout.GetNumTracks());
-	for(size_t t= 0; t < inout.GetNumTracks(); ++t)
+	for(int t= 0; t < inout.GetNumTracks(); ++t)
 	{
 		real_take_from[t]= iTakeFromTrack[t];
 	}
 	NoteData tempNoteData;
 	tempNoteData.LoadTransformed( inout, inout.GetNumTracks(), real_take_from );
 
-	if( tt == super_shuffle )
+	if( tt == TrackMapping_SuperShuffle )
 		SuperShuffleTaps( tempNoteData, iStartIndex, iEndIndex );
 
 	inout.CopyAll( tempNoteData );
@@ -2017,7 +2032,7 @@ void NoteDataUtil::Stomp( NoteData &inout, StepsType st, int iStartIndex, int iE
 {
 	// Make all non jumps with ample space around them into jumps.
 	int iTrackMapping[MAX_NOTE_TRACKS];
-	GetTrackMapping( st, stomp, inout.GetNumTracks(), iTrackMapping );
+	GetTrackMapping( st, TrackMapping_Stomp, inout.GetNumTracks(), iTrackMapping );
 
 	FOREACH_NONEMPTY_ROW_ALL_TRACKS_RANGE( inout, r, iStartIndex, iEndIndex )
 	{
@@ -2350,13 +2365,13 @@ void NoteDataUtil::TransformNoteData( NoteData &nd, const PlayerOptions &po, Ste
 	if( po.m_bTransforms[PlayerOptions::TRANSFORM_HOLDROLLS] )	NoteDataUtil::ChangeHoldsToRolls( nd, iStartIndex, iEndIndex );
 
 	// Apply turns and shuffles last so that they affect inserts.
-	if( po.m_bTurns[PlayerOptions::TURN_MIRROR] )			NoteDataUtil::Turn( nd, st, NoteDataUtil::mirror, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_BACKWARDS] )	NoteDataUtil::Turn( nd, st, NoteDataUtil::backwards, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_LEFT] )			NoteDataUtil::Turn( nd, st, NoteDataUtil::left, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_RIGHT] )			NoteDataUtil::Turn( nd, st, NoteDataUtil::right, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_SHUFFLE] )			NoteDataUtil::Turn( nd, st, NoteDataUtil::shuffle, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_SOFT_SHUFFLE] )			NoteDataUtil::Turn( nd, st, NoteDataUtil::soft_shuffle, iStartIndex, iEndIndex );
-	if( po.m_bTurns[PlayerOptions::TURN_SUPER_SHUFFLE] )		NoteDataUtil::Turn( nd, st, NoteDataUtil::super_shuffle, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_MIRROR] )			NoteDataUtil::Turn( nd, st, TrackMapping_Mirror, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_BACKWARDS] )	NoteDataUtil::Turn( nd, st, TrackMapping_Backwards, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_LEFT] )			NoteDataUtil::Turn( nd, st, TrackMapping_Left, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_RIGHT] )			NoteDataUtil::Turn( nd, st, TrackMapping_Right, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_SHUFFLE] )			NoteDataUtil::Turn( nd, st, TrackMapping_Shuffle, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_SOFT_SHUFFLE] )			NoteDataUtil::Turn( nd, st, TrackMapping_SoftShuffle, iStartIndex, iEndIndex );
+	if( po.m_bTurns[PlayerOptions::TURN_SUPER_SHUFFLE] )		NoteDataUtil::Turn( nd, st, TrackMapping_SuperShuffle, iStartIndex, iEndIndex );
 }
 
 void NoteDataUtil::AddTapAttacks( NoteData &nd, Song* pSong )
@@ -2646,6 +2661,397 @@ unsigned int NoteDataUtil::GetTotalHoldTicks( NoteData* nd, const TimingData* td
 	}
 	return ret;
 }
+
+// lua start
+#include "LuaBinding.h"
+
+namespace
+{
+	int CollectNoteData(lua_State* L)
+	{
+		NoteData* nd= Luna<NoteData>::check(L, 1);
+		LOG->Trace("Collecting a NoteData.");
+		delete nd;
+		return 0;
+	}
+	int NewNoteData(lua_State* L)
+	{
+		// The point of this function is to create a NoteData that will be garbage collected by Lua, unlike every other thing that Stepmania passes to Lua.
+		NoteData* nd= new NoteData;
+		nd->PushSelf(L);  // stack: nd
+		int nd_index= lua_gettop(L);
+		lua_getmetatable(L, nd_index); // stack: nd, nd_meta
+		int nd_meta_index= lua_gettop(L);
+		lua_createtable(L, 0, 0); // stack: nd, nd_meta, new_meta
+		int new_meta_index= lua_gettop(L);
+		lua_pushcfunction(L, CollectNoteData); // stack: nd, nd_meta, new_meta, CND
+		lua_setfield(L, new_meta_index, "__gc"); // stack: nd, nd_meta, new_meta
+		// Set all the fields from nd_meta to new_meta.
+		// lua_next requires nil as a key to start from when iterating over a table.
+		lua_pushnil(L);
+		while(lua_next(L, nd_meta_index) != 0)
+		{
+			// stack: nd, nd_meta, new_meta, key, value
+			lua_pushvalue(L, -2); // stack: nd, nd_meta, new_meta, key, value, key
+			lua_insert(L, -2); // stack: nd, nd_meta, new_meta, key, key, value
+			lua_settable(L, new_meta_index); // stack: nd, nd_meta, new_meta, key
+		}
+		// stack: nd, nd_meta, new_meta
+		lua_setmetatable(L, nd_index); // stack: nd, nd_meta
+		lua_pop(L, 1); // stack: nd
+		return 1;
+	}
+
+	int GetSmallestNoteTypeForMeasure(lua_State* L)
+	{
+		NoteData& note_data= *Luna<NoteData>::check(L, 1);
+		int measure= IArg(2);
+		LuaHelpers::Push(L, NoteDataUtil::GetSmallestNoteTypeForMeasure(note_data, measure));
+		return 1;
+	}
+	int GetSmallestNoteTypeInRange(lua_State* L)
+	{
+		NoteData& note_data= *Luna<NoteData>::check(L, 1);
+		int start= LuaBeatToNoteRow(FArg(2));
+		int end= LuaBeatToNoteRow(FArg(3));
+		LuaHelpers::Push(L, NoteDataUtil::GetSmallestNoteTypeInRange(note_data, start, end));
+		return 1;
+	}
+	// No interface for any function handling SMNoteDataStrings because the lua side shouldn't be handed those. -Kyz
+	int SplitCompositeNoteData(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		vector<NoteData> ret;
+		NoteDataUtil::SplitCompositeNoteData(in, ret);
+		lua_createtable(L, ret.size(), 0);
+		for(size_t r= 0; r < ret.size(); ++r)
+		{
+			NewNoteData(L);
+			Luna<NoteData>::check(L, -1)->CopyAll(ret[r]);
+			lua_rawseti(L, -2, r+1);
+		}
+		return 1;
+	}
+	int CombineCompositeNoteData(lua_State* L)
+	{
+		size_t num= lua_objlen(L, 1);
+		vector<NoteData> in(num);
+		for(size_t i= 0; i < num; ++i)
+		{
+			lua_pushnumber(L, i+1);
+			lua_gettable(L, -2);
+			in[i].CopyAll(*Luna<NoteData>::check(L, -1));
+			lua_pop(L, 1);
+		}
+		NewNoteData(L);
+		NoteDataUtil::CombineCompositeNoteData(*Luna<NoteData>::check(L, -1), in);
+		return 1;
+	}
+	// No interface for LoadTransformedSlidingWindow or LoadOverlapped because they're terrible autogen and I'd rather replace them with something intelligent. -Kyz
+	// No interface for LoadTransformedLights because I can't see how it would be useful to the theme. -Kyz
+	// No interface for InsertHoldTails because I can't see how it would be useful to the theme. -Kyz
+#define GET_RADAR_VALUE(radar_func) \
+	int radar_func(lua_State* L)\
+	{\
+		NoteData& in= *Luna<NoteData>::check(L, 1);\
+		float song_len= FArg(2);\
+		lua_pushnumber(L, NoteDataUtil::radar_func(in, song_len));\
+		return 1;\
+	}
+	GET_RADAR_VALUE(GetStreamRadarValue);
+	GET_RADAR_VALUE(GetVoltageRadarValue);
+	GET_RADAR_VALUE(GetAirRadarValue);
+	GET_RADAR_VALUE(GetFreezeRadarValue);
+	GET_RADAR_VALUE(GetChaosRadarValue);
+#undef GET_RADAR_VALUE
+	int CalculateRadarValues(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		float song_len= FArg(2);
+		RadarValues out;
+		NoteDataUtil::CalculateRadarValues(in, song_len, out);
+		// I don't see why the RadarValues lua class exists, a table is easier to use.  So I'm returning a table here. -Kyz
+		lua_createtable(L, 0, NUM_RadarCategory);
+		FOREACH_ENUM(RadarCategory, rc)
+		{
+			lua_pushnumber(L, out[rc]);
+			lua_setfield(L, -2, RadarCategoryToString(rc).c_str());
+		}
+		return 1;
+	}
+#define IN_START_END_COMMON \
+		NoteData& in= *Luna<NoteData>::check(L, 1);\
+		int start_row= LuaBeatToNoteRow(FArg(2));\
+		int end_row= LuaBeatToNoteRow(FArg(3));
+#define ALTER_IN_RANGE(alter_func) \
+	int alter_func(lua_State* L)\
+	{\
+		IN_START_END_COMMON\
+		NoteDataUtil::alter_func(in, start_row, end_row);\
+		return 0;\
+	}
+	ALTER_IN_RANGE(RemoveHoldNotes);
+	ALTER_IN_RANGE(ChangeRollsToHolds);
+	ALTER_IN_RANGE(ChangeHoldsToRolls);
+	ALTER_IN_RANGE(RemoveJumps);
+	ALTER_IN_RANGE(RemoveHands);
+	ALTER_IN_RANGE(RemoveQuads);
+	ALTER_IN_RANGE(RemoveMines);
+	ALTER_IN_RANGE(RemoveLifts);
+	ALTER_IN_RANGE(RemoveFakes);
+	ALTER_IN_RANGE(Little);
+	ALTER_IN_RANGE(Wide);
+	ALTER_IN_RANGE(Big);
+	ALTER_IN_RANGE(Quick);
+	ALTER_IN_RANGE(BMRize);
+	ALTER_IN_RANGE(Skippy);
+	ALTER_IN_RANGE(AddMines);
+	ALTER_IN_RANGE(Echo);
+	ALTER_IN_RANGE(Planted);
+	ALTER_IN_RANGE(Floored);
+	ALTER_IN_RANGE(Twister);
+#undef ALTER_IN_RANGE
+	int Turn(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		StepsType st= Enum::Check<StepsType>(L, 4);
+		TrackMapping tt= Enum::Check<TrackMapping>(L, 5);
+		NoteDataUtil::Turn(in, st, tt, start_row, end_row);
+		return 0;
+	}
+	int InsertIntelligentTaps(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		int window_size= BeatToNoteRow(FArg(4));
+		int insert_offset= BeatToNoteRow(FArg(5));
+		int window_stride= BeatToNoteRow(FArg(6));
+		bool skippy= BArg(7);
+		NoteDataUtil::InsertIntelligentTaps(in, window_size, insert_offset, window_stride, skippy, start_row, end_row);
+		return 0;
+	}
+	int ConvertTapsToHolds(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		int simul_holds= IArg(4);
+		NoteDataUtil::ConvertTapsToHolds(in, simul_holds, start_row, end_row);
+		return 0;
+	}
+	int RemoveSimultaneousNotes(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		int max_simul= IArg(4);
+		NoteDataUtil::RemoveSimultaneousNotes(in, max_simul, start_row, end_row);
+		return 0;
+	}
+	int RemoveSpecificTapNotes(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		TapNoteType type= Enum::Check<TapNoteType>(L, 4);
+		NoteDataUtil::RemoveSpecificTapNotes(in, type, start_row, end_row);
+		return 0;
+	}
+	int RemoveStretch(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		StepsType st= Enum::Check<StepsType>(L, 4);
+		NoteDataUtil::RemoveStretch(in, st, start_row, end_row);
+		return 0;
+	}
+	int SnapToNearestNoteType(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		NoteType nta= Enum::Check<NoteType>(L, 2);
+		NoteType ntb= Enum::Check<NoteType>(L, 3);
+		NoteDataUtil::SnapToNearestNoteType(in, nta, ntb, start_row, end_row);
+		return 0;
+	}
+	int ScaleRegion(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		float scale= FArg(4);
+		NoteDataUtil::ScaleRegion(in, scale, start_row, end_row);
+		return 0;
+	}
+	int AnyTapsAndHoldsInTrackRange(lua_State* L)
+	{
+		IN_START_END_COMMON;
+		int track= IArg(4);
+		lua_pushboolean(L, NoteDataUtil::AnyTapsAndHoldsInTrackRange(in, track, start_row, end_row));
+		return 1;
+	}
+#undef IN_START_END_COMMON
+	int RemoveAllButOneTap(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		int row= LuaBeatToNoteRow(FArg(2));
+		NoteDataUtil::RemoveAllButOneTap(in, row);
+		return 0;
+	}
+	int RemoveAllButPlayer(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		PlayerNumber pn= Enum::Check<PlayerNumber>(L, 2);
+		NoteDataUtil::RemoveAllButPlayer(in, pn);
+		return 0;
+	}
+#define SIMPLE_METHOD(func_name)\
+	int func_name(lua_State* L)\
+	{\
+		NoteData& in= *Luna<NoteData>::check(L, 1);\
+		NoteDataUtil::func_name(in);\
+		return 0;\
+	}
+	SIMPLE_METHOD(ConvertAdditionsToRegular);
+	SIMPLE_METHOD(Backwards);
+	SIMPLE_METHOD(SwapSides);
+	SIMPLE_METHOD(CopyLeftToRight);
+	SIMPLE_METHOD(CopyRightToLeft);
+	SIMPLE_METHOD(ClearLeft);
+	SIMPLE_METHOD(ClearRight);
+	SIMPLE_METHOD(CollapseToOne);
+	SIMPLE_METHOD(CollapseLeft);
+	SIMPLE_METHOD(ShiftLeft);
+	SIMPLE_METHOD(ShiftRight);
+#undef SIMPLE_METHOD
+	int ShiftTracks(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		int shift_by= IArg(2);
+		NoteDataUtil::ShiftTracks(in, shift_by);
+		return 0;
+	}
+	// TODO:  TransformNoteData based on AttackArray
+	// TODO:  TransformNoteData based on PlayerOptions
+	// No interface for AddTapAttacks because it does so little, and applying random modifiers during song play is something the theme can already do better in other ways. -Kyz
+	int Scale(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		float scale= FArg(2);
+		NoteDataUtil::Scale(in, scale);
+		return 0;
+	}
+	int InsertRows(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		int start= BeatToNoteRow(FArg(2));
+		int rows_to_shift= IArg(3);
+		NoteDataUtil::InsertRows(in, start, rows_to_shift);
+		return 0;
+	}
+	int DeleteRows(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		int start= BeatToNoteRow(FArg(2));
+		int rows_to_shift= IArg(3);
+		NoteDataUtil::DeleteRows(in, start, rows_to_shift);
+		return 0;
+	}
+	int RemoveAllTapsOfType(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		TapNoteType type= Enum::Check<TapNoteType>(L, 2);
+		NoteDataUtil::RemoveAllTapsOfType(in, type);
+		return 0;
+	}
+	int RemoveAllTapsExceptForType(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		TapNoteType type= Enum::Check<TapNoteType>(L, 2);
+		NoteDataUtil::RemoveAllTapsExceptForType(in, type);
+		return 0;
+	}
+	int GetMaxNonEmptyTrack(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		lua_pushinteger(L, NoteDataUtil::GetMaxNonEmptyTrack(in));
+		return 1;
+	}
+	// No interface for GetNextEditorPosition because NoteData::GetNextTapNoteRowForAllTracks exists.
+	// Same for GetPrevEditorPosition. -Kyz
+	int SetHopoPossibleFlags(lua_State* L)
+	{
+		NoteData& in= *Luna<NoteData>::check(L, 1);
+		Song* song= Luna<Song>::check(L, 2);
+		NoteDataUtil::SetHopoPossibleFlags(song, in);
+		return 0;
+	}
+	int GetTotalHoldTicks(lua_State* L)
+	{
+		NoteData* in= Luna<NoteData>::check(L, 1);
+		TimingData* time= Luna<TimingData>::check(L, 2);
+		lua_pushinteger(L, NoteDataUtil::GetTotalHoldTicks(in, time));
+		return 1;
+	}
+
+	const luaL_Reg NoteDataUtilTable[] =
+	{
+		LIST_METHOD( NewNoteData ),
+		LIST_METHOD( GetSmallestNoteTypeForMeasure ),
+		LIST_METHOD( GetSmallestNoteTypeInRange ),
+		LIST_METHOD( SplitCompositeNoteData ),
+		LIST_METHOD( CombineCompositeNoteData ),
+		LIST_METHOD( GetStreamRadarValue ),
+		LIST_METHOD( GetVoltageRadarValue ),
+		LIST_METHOD( GetAirRadarValue ),
+		LIST_METHOD( GetFreezeRadarValue ),
+		LIST_METHOD( GetChaosRadarValue ),
+		LIST_METHOD( CalculateRadarValues ),
+		LIST_METHOD( RemoveHoldNotes ),
+		LIST_METHOD( ChangeRollsToHolds ),
+		LIST_METHOD( ChangeHoldsToRolls ),
+		LIST_METHOD( RemoveJumps ),
+		LIST_METHOD( RemoveHands ),
+		LIST_METHOD( RemoveQuads ),
+		LIST_METHOD( RemoveMines ),
+		LIST_METHOD( RemoveLifts ),
+		LIST_METHOD( RemoveFakes ),
+		LIST_METHOD( Little ),
+		LIST_METHOD( Wide ),
+		LIST_METHOD( Big ),
+		LIST_METHOD( Quick ),
+		LIST_METHOD( BMRize ),
+		LIST_METHOD( Skippy ),
+		LIST_METHOD( AddMines ),
+		LIST_METHOD( Echo ),
+		LIST_METHOD( Planted ),
+		LIST_METHOD( Floored ),
+		LIST_METHOD( Twister ),
+		LIST_METHOD( Turn ),
+		LIST_METHOD( InsertIntelligentTaps ),
+		LIST_METHOD( ConvertTapsToHolds ),
+		LIST_METHOD( RemoveSimultaneousNotes ),
+		LIST_METHOD( RemoveSpecificTapNotes ),
+		LIST_METHOD( RemoveStretch ),
+		LIST_METHOD( SnapToNearestNoteType ),
+		LIST_METHOD( ScaleRegion ),
+		LIST_METHOD( AnyTapsAndHoldsInTrackRange ),
+		LIST_METHOD( RemoveAllButOneTap ),
+		LIST_METHOD( RemoveAllButPlayer ),
+		LIST_METHOD( ConvertAdditionsToRegular ),
+		LIST_METHOD( Backwards ),
+		LIST_METHOD( SwapSides ),
+		LIST_METHOD( CopyLeftToRight ),
+		LIST_METHOD( CopyRightToLeft ),
+		LIST_METHOD( ClearLeft ),
+		LIST_METHOD( ClearRight ),
+		LIST_METHOD( CollapseToOne ),
+		LIST_METHOD( CollapseLeft ),
+		LIST_METHOD( ShiftLeft ),
+		LIST_METHOD( ShiftRight ),
+		LIST_METHOD( ShiftTracks ),
+		LIST_METHOD( Scale ),
+		LIST_METHOD( InsertRows ),
+		LIST_METHOD( DeleteRows ),
+		LIST_METHOD( RemoveAllTapsOfType ),
+		LIST_METHOD( RemoveAllTapsExceptForType ),
+		LIST_METHOD( GetMaxNonEmptyTrack ),
+		LIST_METHOD( SetHopoPossibleFlags ),
+		LIST_METHOD( GetTotalHoldTicks ),
+		{ NULL, NULL }
+	};
+}
+
+LUA_REGISTER_NAMESPACE( NoteDataUtil )
 
 /*
  * (c) 2001-2004 Chris Danford, Glenn Maynard

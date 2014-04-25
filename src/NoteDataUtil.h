@@ -24,6 +24,25 @@ struct RadarStats
 	int quads;
 };
 
+/** @brief The types of transformations available for the NoteData. */
+enum TrackMapping
+{
+	TrackMapping_Left, /**< The NoteData is arranged as if the player was facing to the left. */
+	TrackMapping_Right, /**< The NoteData is arranged as if the player was facing to the right. */
+	TrackMapping_Mirror, /**< The NoteData is arranged as if facing a straight mirror. */
+	TrackMapping_Backwards, /**< The NoteData is arranged as if the player was facing backwards.
+								This is NOT always the same as mirror. */
+	TrackMapping_Shuffle,
+	TrackMapping_SoftShuffle,
+	TrackMapping_SuperShuffle,
+	TrackMapping_Stomp,
+	NUM_TrackMapping,
+	TrackMapping_Invalid
+};
+const RString& TrackMappingToString(TrackMapping tm);
+const RString& TrackMappingToLocalizedString(TrackMapping tm);
+LuaDeclareType(TrackMapping);
+
 void PlaceAutoKeysound( NoteData &out, int row, TapNote akTap );
 int FindLongestOverlappingHoldNoteForAnyTrack( const NoteData &in, int iRow );
 void LightTransformHelper( const NoteData &in, NoteData &out, const vector<int> &aiTracks );
@@ -112,20 +131,7 @@ namespace NoteDataUtil
 	void RemoveStretch( NoteData &inout, StepsType st, int iStartIndex = 0, int iEndIndex = MAX_NOTE_ROW );
 	void RemoveAllButOneTap( NoteData &inout, int row );
 	void RemoveAllButPlayer( NoteData &inout, PlayerNumber pn );
-	/** @brief The types of transformations available for the NoteData. */
-	enum TrackMapping
-	{
-		left, /**< The NoteData is arranged as if the player was facing to the left. */
-		right, /**< The NoteData is arranged as if the player was facing to the right. */
-		mirror, /**< The NoteData is arranged as if facing a straight mirror. */
-		backwards, /**< The NoteData is arranged as if the player was facing backwards.
-					This is NOT always the same as mirror. */
-		shuffle,
-		soft_shuffle,
-		super_shuffle,
-		stomp,
-		NUM_TRACK_MAPPINGS
-	};
+
 	void Turn( NoteData &inout, StepsType st, TrackMapping tt, int iStartIndex = 0, int iEndIndex = MAX_NOTE_ROW );
 	void Little( NoteData &inout, int iStartIndex = 0, int iEndIndex = MAX_NOTE_ROW );
 	void Wide( NoteData &inout, int iStartIndex = 0, int iEndIndex = MAX_NOTE_ROW );

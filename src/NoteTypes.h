@@ -295,6 +295,7 @@ inline int   BeatToNoteRow( float fBeatNum )		{ return lrintf( fBeatNum * ROWS_P
  * @param fBeatNum the beat to convert.
  * @return the note row. */
 inline int   BeatToNoteRowNotRounded( float fBeatNum )	{ return (int)( fBeatNum * ROWS_PER_BEAT ); }
+int LuaBeatToNoteRow(float beat); // special version that converts -1 to MAX_NOTE_ROW
 /**
  * @brief Convert the note row to a beat.
  * @param iRow the row to convert.

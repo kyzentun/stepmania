@@ -81,8 +81,8 @@ struct RadarValues
 	RString ToString( int iMaxValues = -1 ) const; // default = all
 	void FromString( RString sValues );
 
-	static ThemeMetric<bool> WRITE_SIMPLE_VALIES;
-	static ThemeMetric<bool> WRITE_COMPLEX_VALIES;
+	static ThemeMetric<bool> WRITE_SIMPLE_VALUES;
+	static ThemeMetric<bool> WRITE_COMPLEX_VALUES;
 
 	// Lua
 	void PushSelf( lua_State *L );

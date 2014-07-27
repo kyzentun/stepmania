@@ -95,6 +95,11 @@ public:
 	 */
 	Difficulty GetDifficulty() const		{ return Real()->m_Difficulty; }
 	/**
+	 * @brief Retrieve the stepstype used for this edit.
+	 * @return the stepstype used for this edit.
+	 */
+	StepsType GetStepsType() const		{ return Real()->m_StepsType; }
+	/**
 	 * @brief Retrieve the meter used for this edit.
 	 * @return the meter used for this edit.
 	 */
@@ -135,6 +140,21 @@ public:
 	void SetNoteData( const NoteData& noteDataNew );
 	void SetSMNoteData( const RString &notes_comp );
 	void GetSMNoteData( RString &notes_comp_out ) const;
+
+	// The same as the equivalent functions, but fetching info from the parent instead. -Kyz
+	bool IsParentAutogen() const;
+	bool IsParentAnEdit() const;
+	bool IsParentAPlayerEdit() const;
+	bool WasParentLoadedFromProfile() const;
+	ProfileSlot GetParentLoadedFromProfileSlot() const;
+	RString GetParentDescription() const;
+	RString GetParentChartStyle() const;
+	Difficulty GetParentDifficulty() const;
+	StepsType GetParentStepsType() const;
+	int GetParentMeter() const;
+	const RadarValues& GetParentRadarValues( PlayerNumber pn ) const;
+	RString GetParentCredit() const;
+	RString GetParentChartName() const;
 
 	/**
 	 * @brief Retrieve the NoteData from the original source.

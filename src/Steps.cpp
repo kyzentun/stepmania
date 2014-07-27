@@ -56,6 +56,88 @@ Steps::~Steps()
 {
 }
 
+#define NO_PARENT_RETURN(ret) \
+	if(parent == NULL) { return (ret); }
+bool Steps::IsParentAutogen() const
+{
+	NO_PARENT_RETURN(false);
+	return parent->IsAutogen();
+}
+
+bool Steps::IsParentAnEdit() const
+{
+	NO_PARENT_RETURN(false);
+	return parent->IsAnEdit();
+}
+
+bool Steps::IsParentAPlayerEdit() const
+{
+	NO_PARENT_RETURN(false);
+	return parent->IsAPlayerEdit();
+}
+
+bool Steps::WasParentLoadedFromProfile() const
+{
+	NO_PARENT_RETURN(false);
+	return parent->WasLoadedFromProfile();
+}
+
+ProfileSlot Steps::GetParentLoadedFromProfileSlot() const
+{
+	NO_PARENT_RETURN(ProfileSlot_Invalid);
+	return parent->GetLoadedFromProfileSlot();
+}
+
+RString Steps::GetParentDescription() const
+{
+	NO_PARENT_RETURN("");
+	return parent->GetDescription();
+}
+
+RString Steps::GetParentChartStyle() const
+{
+	NO_PARENT_RETURN("");
+	return parent->GetParentChartStyle();
+}
+
+Difficulty Steps::GetParentDifficulty() const
+{
+	NO_PARENT_RETURN(Difficulty_Invalid);
+	return parent->GetDifficulty();
+}
+
+StepsType Steps::GetParentStepsType() const
+{
+	NO_PARENT_RETURN(StepsType_Invalid);
+	return parent->GetStepsType();
+}
+
+int Steps::GetParentMeter() const
+{
+	NO_PARENT_RETURN(0);
+	return parent->GetMeter();
+}
+
+const RadarValues& Steps::GetParentRadarValues( PlayerNumber pn ) const
+{
+	// Can't think of a good default return value for RadarValues. -Kyz
+	NO_PARENT_RETURN(GetRadarValues(pn));
+	return parent->GetRadarValues(pn);
+}
+
+RString Steps::GetParentCredit() const
+{
+	NO_PARENT_RETURN("");
+	return parent->GetCredit();
+}
+
+RString Steps::GetParentChartName() const
+{
+	NO_PARENT_RETURN("");
+	return parent->GetChartName();
+}
+#undef NO_PARENT_RETURN
+
 void Steps::GetDisplayBpms( DisplayBpms &AddTo ) const
 {
 	if( this->GetDisplayBPM() == DISPLAY_BPM_SPECIFIED )
@@ -566,7 +648,7 @@ void Steps::SetCachedRadarValues( const RadarValues v[NUM_PLAYERS] )
 class LunaSteps: public Luna<Steps>
 {
 public:
-	DEFINE_METHOD( GetStepsType,	m_StepsType )
+	DEFINE_METHOD( GetStepsType,	GetStepsType() )
 	DEFINE_METHOD( GetDifficulty,	GetDifficulty() )
 	DEFINE_METHOD( GetDescription,	GetDescription() )
 	DEFINE_METHOD( GetChartStyle,	GetChartStyle() )
@@ -576,6 +658,60 @@ public:
 	DEFINE_METHOD( IsAutogen,	IsAutogen() )
 	DEFINE_METHOD( IsAnEdit,	IsAnEdit() )
 	DEFINE_METHOD( IsAPlayerEdit,	IsAPlayerEdit() )
+
+	static int GetParentConstInfo( T* p, lua_State *L )
+	{
+		if(!p->IsAutogen())
+		{
+			return 0;
+		}
+		PlayerNumber pn = PLAYER_1;
+		if (!lua_isnil(L, 1)) {
+			pn = Enum::Check<PlayerNumber>(L, 1);
+		}
+
+		bool autogen= p->IsParentAutogen();
+		bool edit= p->IsParentAnEdit();
+		bool player_edit= p->IsParentAPlayerEdit();
+		bool from_profile= p->WasParentLoadedFromProfile();
+		ProfileSlot from_slot= p->GetParentLoadedFromProfileSlot();
+		RString description= p->GetParentDescription();
+		RString chart_style= p->GetParentChartStyle();
+		Difficulty diff= p->GetParentDifficulty();
+		StepsType steps_type= p->GetParentStepsType();
+		int meter= p->GetParentMeter();
+		RadarValues& rv= const_cast<RadarValues&>(p->GetParentRadarValues(pn));
+		RString credit= p->GetParentCredit();
+		RString chart_name= p->GetParentChartName();
+		lua_createtable(L, 0, 13);
+		lua_pushboolean(L, autogen);
+		lua_setfield(L, -2, "IsAutogen");
+		lua_pushboolean(L, edit);
+		lua_setfield(L, -2, "IsAnEdit");
+		lua_pushboolean(L, player_edit);
+		lua_setfield(L, -2, "IsAPlayerEdit");
+		lua_pushboolean(L, from_profile);
+		lua_setfield(L, -2, "WasLoadedFromProfile");
+		Enum::Push(L, from_slot);
+		lua_setfield(L, -2, "LoadedFromProfileSlot");
+		LuaHelpers::Push(L, description);
+		lua_setfield(L, -2, "Description");
+		LuaHelpers::Push(L, chart_style);
+		lua_setfield(L, -2, "ChartStyle");
+		Enum::Push(L, diff);
+		lua_setfield(L, -2, "Difficulty");
+		Enum::Push(L, steps_type);
+		lua_setfield(L, -2, "StepsType");
+		lua_pushnumber(L, meter);
+		lua_setfield(L, -2, "Meter");
+		rv.PushSelf(L);
+		lua_setfield(L, -2, "RadarValues");
+		LuaHelpers::Push(L, credit);
+		lua_setfield(L, -2, "Credit");
+		LuaHelpers::Push(L, chart_name);
+		lua_setfield(L, -2, "ChartName");
+		return 1;
+	}
 
 	static int HasSignificantTimingChanges( T* p, lua_State *L )
 	{

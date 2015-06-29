@@ -18,6 +18,7 @@ class CombinedLifeMeter;
 class ScoreKeeper;
 class Inventory;
 class RageTimer;
+class NewField;
 class NoteField;
 class PlayerStageStats;
 class JudgedRows;
@@ -195,6 +196,7 @@ protected:
 
 	NoteData		&m_NoteData;
 	NoteField		*m_pNoteField;
+	NewField		*m_new_field;
 
 	std::vector<HoldJudgment*>	m_vpHoldJudgment;
 

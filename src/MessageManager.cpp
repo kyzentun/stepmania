@@ -120,9 +120,20 @@ Message::Message( const RString &s, const LuaReference &params )
 //	m_pParams = new LuaTable( params );
 }
 
+Message::Message(Message&& other)
+{
+	m_sName.swap(other.m_sName);
+	m_pParams= other.m_pParams;
+	other.m_pParams= nullptr;
+	m_bBroadcast= other.m_bBroadcast;
+}
+
 Message::~Message()
 {
-	delete m_pParams;
+	if(m_pParams != nullptr)
+	{
+		delete m_pParams;
+	}
 }
 
 void Message::PushParamTable( lua_State *L )

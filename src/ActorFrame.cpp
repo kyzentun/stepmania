@@ -6,7 +6,6 @@
 #include "XmlFile.h"
 #include "ActorUtil.h"
 #include "LuaBinding.h"
-#include "ActorUtil.h"
 #include "RageDisplay.h"
 #include "ScreenDimensions.h"
 

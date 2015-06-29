@@ -16,6 +16,7 @@
 #include "LifeMeter.h"
 #include "CombinedLifeMeter.h"
 #include "PlayerAI.h"
+#include "NewField.h"
 #include "NoteField.h"
 #include "NoteDataUtil.h"
 #include "ScreenMessage.h"
@@ -249,10 +250,13 @@ Player::Player( NoteData &nd, bool bVisibleParts ) : m_NoteData(nd)
 	PlayerAI::InitFromDisk();
 
 	m_pNoteField = nullptr;
+	m_new_field= nullptr;
 	if( bVisibleParts )
 	{
 		m_pNoteField = new NoteField;
 		m_pNoteField->SetName( "NoteField" );
+		m_new_field= new NewField;
+		m_new_field->SetName("NewField");
 	}
 	m_pJudgedRows = new JudgedRows;
 
@@ -263,6 +267,7 @@ Player::~Player()
 {
 	SAFE_DELETE( m_pAttackDisplay );
 	SAFE_DELETE( m_pNoteField );
+	SAFE_DELETE(m_new_field);
 	for( unsigned i = 0; i < m_vpHoldJudgment.size(); ++i )
 		SAFE_DELETE( m_vpHoldJudgment[i] );
 	SAFE_DELETE( m_pJudgedRows );
@@ -534,6 +539,10 @@ void Player::Init(
 		ActorUtil::LoadAllCommands( *m_pNoteField, sType );
 		this->AddChild( m_pNoteField );
 	}
+	if(m_new_field)
+	{
+		this->AddChild(m_new_field);
+	}
 
 	m_vbFretIsDown.resize( GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_iColsPerPlayer );
 	std::fill(m_vbFretIsDown.begin(), m_vbFretIsDown.end(), false);
@@ -716,6 +725,8 @@ void Player::Load()
 	{
 		m_pNoteField->SetY( fNoteFieldMiddle );
 		m_pNoteField->Load( &m_NoteData, iDrawDistanceAfterTargetsPixels, iDrawDistanceBeforeTargetsPixels );
+		m_new_field->SetY(GRAY_ARROWS_Y_STANDARD - fNoteFieldMiddle);
+		m_new_field->set_note_data(&m_NoteData, m_Timing, GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber));
 	}
 
 	bool bPlayerUsingBothSides = GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->GetUsesCenteredArrows();
@@ -948,8 +959,23 @@ void Player::Update( float fDeltaTime )
 
 		// TODO: Make this work for non-human-controlled players
 		if( bIsHoldingButton && !GAMESTATE->m_bDemonstrationOrJukebox && m_pPlayerState->m_PlayerController==PC_HUMAN )
+		{
 			if( m_pNoteField )
+			{
 				m_pNoteField->SetPressed( col );
+			}
+			if(m_new_field != nullptr)
+			{
+				m_new_field->set_pressed(col, true);
+			}
+		}
+		else
+		{
+			if(m_new_field != nullptr)
+			{
+				m_new_field->set_pressed(col, false);
+			}
+		}
 	}
 
 	// handle Autoplay for rolls
@@ -1436,6 +1462,13 @@ void Player::UpdateHoldNotes( int iSongRow, float fDeltaTime, vector<TrackRowTap
 						m_pNoteField->DidHoldNote( iTrack, HNS_Held, bBright );	// bright ghost flash
 					}
 				}
+				if(m_new_field)
+				{
+					for(auto&& trtn : vTN)
+					{
+						m_new_field->did_hold_note(trtn.iTrack, HNS_Held, bBright);
+					}
+				}
 			}
 
 			else
@@ -1521,6 +1554,11 @@ void Player::DrawPrimitives()
 	// TODO: Remove use of PlayerNumber.
 	PlayerNumber pn = m_pPlayerState->m_PlayerNumber;
 
+	if(m_new_field != nullptr)
+	{
+		m_new_field->update_displayed_beat(m_pPlayerState->GetDisplayedPosition().m_fSongBeat);
+	}
+
 	// May have both players in doubles (for battle play); only draw primary player.
 	if( GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_StyleType == StyleType_OnePlayerTwoSides  &&
 		pn != GAMESTATE->GetMasterPlayerNumber() )
@@ -1568,6 +1606,7 @@ void Player::DrawPrimitives()
 	{
 		PlayerNoteFieldPositioner poser(this, GetX(), tilt, skew, mini, center_y, reverse);
 		m_pNoteField->Draw();
+		m_new_field->Draw();
 	}
 
 	// m_pNoteField->m_sprBoard->GetVisible()
@@ -1629,11 +1668,15 @@ Player::PlayerNoteFieldPositioner::PlayerNoteFieldPositioner(
 	player->m_pNoteField->SetY(original_y + y_offset);
 	player->m_pNoteField->SetZoom(zoom);
 	player->m_pNoteField->SetRotationX(tilt_degrees);
+	player->m_new_field->SetY(original_y + y_offset);
+	player->m_new_field->SetZoom(zoom);
+	player->m_new_field->SetRotationX(tilt_degrees);
 }
 
 Player::PlayerNoteFieldPositioner::~PlayerNoteFieldPositioner()
 {
 	player->m_pNoteField->SetY(original_y);
+	player->m_new_field->SetY(original_y);
 	player->PopPlayerMatrix();
 }
 
@@ -2156,7 +2199,13 @@ void Player::StepStrumHopo( int col, int row, const RageTimer &tm, bool bHeld, b
 
 						bool bBright = m_pPlayerStageStats && m_pPlayerStageStats->m_iCurCombo>(unsigned int)BRIGHT_GHOST_COMBO_THRESHOLD;
 						if( m_pNoteField )
+						{
 							m_pNoteField->DidHoldNote( col, HNS_Held, bBright );
+						}
+						if(m_new_field != nullptr)
+						{
+							m_new_field->did_hold_note(col, HNS_Held, bBright);
+						}
 					}
 				}
 				break;
@@ -2619,6 +2668,8 @@ void Player::StepStrumHopo( int col, int row, const RageTimer &tm, bool bHeld, b
 				const bool bBright = ( m_pPlayerStageStats && m_pPlayerStageStats->m_iCurCombo > (unsigned int)BRIGHT_GHOST_COMBO_THRESHOLD ) || bBlind;
 				if( m_pNoteField )
 					m_pNoteField->DidTapNote( col, bBlind? TNS_W1:score, bBright );
+				if( m_new_field )
+					m_new_field->did_tap_note( col, bBlind? TNS_W1:score, bBright );
 				if( score >= m_pPlayerState->m_PlayerOptions.GetCurrent().m_MinTNSToHideNotes || bBlind )
 					HideNote( col, iRowOfOverlappingNoteOrRow );
 			}
@@ -2901,7 +2952,13 @@ void Player::UpdateJudgedRows()
 				break;
 			}
 			if( m_pNoteField )
+			{
 				m_pNoteField->DidTapNote( iter.Track(), tn.result.tns, false );
+			}
+			if(m_new_field != nullptr)
+			{
+				m_new_field->did_tap_note(iter.Track(), tn.result.tns, false);
+			}
 
 			if( tn.iKeysoundIndex >= 0 && tn.iKeysoundIndex < (int) m_vKeysounds.size() )
 				setSounds.insert( &m_vKeysounds[tn.iKeysoundIndex] );
@@ -2961,7 +3018,13 @@ void Player::FlashGhostRow( int iRow )
 		if( tn.type == TapNoteType_Empty || tn.type == TapNoteType_Mine || tn.type == TapNoteType_Fake )
 			continue;
 		if( m_pNoteField )
+		{
 			m_pNoteField->DidTapNote( iTrack, lastTNS, bBright );
+		}
+		if(m_new_field != nullptr)
+		{
+			m_new_field->did_tap_note(iTrack, lastTNS, bBright);
+		}
 		if( lastTNS >= m_pPlayerState->m_PlayerOptions.GetCurrent().m_MinTNSToHideNotes || bBlind )
 			HideNote( iTrack, iRow );
 	}
@@ -3288,6 +3351,10 @@ void Player::HandleHoldCheckpoint(int iRow,
 				if( m_pNoteField )
 				{
 					m_pNoteField->DidHoldNote( i, HNS_Held, bBright );
+				}
+				if(m_new_field != nullptr)
+				{
+					m_new_field->did_hold_note(i, HNS_Held, bBright);
 				}
 			}
 		}

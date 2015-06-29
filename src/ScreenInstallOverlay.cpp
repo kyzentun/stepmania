@@ -84,7 +84,7 @@ static void InstallSmzip( const RString &sZipFile, PlayAfterLaunchInfo &out )
 	}
 
 	RString sResult = "Success installing " + sZipFile;
-	for (auto sSrcFile: vsFiles)
+	for (auto& sSrcFile: vsFiles)
 	{
 		RString sDestFile = sSrcFile;
 		sDestFile = sDestFile.Right( sDestFile.length() - TEMP_ZIP_MOUNT_POINT.length() );

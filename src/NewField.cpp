@@ -170,29 +170,54 @@ bool QuantizedStateMap::load_from_lua(lua_State* L, int index, string& insanity_
 	// Pop the table we're loading from off the stack when returning.
 	int original_top= lua_gettop(L) - 1;
 #define RETURN_NOT_SANE(message) lua_settop(L, original_top); insanity_diagnosis= message; return false;
-	size_t num_entries= get_table_len(L, -1, max_state_map_entries, "state map", insanity_diagnosis);
-	if(num_entries == 0)
+	lua_getfield(L, index, "quanta");
+	if(!lua_istable(L, -1))
+	{
+		RETURN_NOT_SANE("No quanta found");
+	}
+	size_t num_quanta= get_table_len(L, -1, max_quanta, "quanta", insanity_diagnosis);
+	if(num_quanta == 0)
 	{
 		RETURN_NOT_SANE(insanity_diagnosis);
 	}
-	vector<vector<size_t> > temp_states;
-	temp_states.resize(num_entries);
-	for(size_t i= 0; i < num_entries; ++i)
+	int quanta_index= lua_gettop(L);
+	vector<QuantizedStates> temp_quanta(num_quanta);
+	for(size_t i= 0; i < temp_quanta.size(); ++i)
 	{
-		lua_rawgeti(L, index, i+1);
-		// We don't know the texture that will be used, so we can't set a sane
-		// max value.
-		string table_name= ssprintf("state map entry %zu", i+1);
-		if(!load_simple_table(L, lua_gettop(L), max_state_map_entries,
-				temp_states[i], static_cast<size_t>(1), static_cast<size_t>(INT_MAX),
-				table_name, insanity_diagnosis))
+		lua_rawgeti(L, quanta_index, i+1);
+		if(!lua_istable(L, -1))
 		{
-			RETURN_NOT_SANE(insanity_diagnosis);
+			RETURN_NOT_SANE(ssprintf("Invalid quantum %zu.", i+1));
 		}
+		lua_getfield(L, -1, "per_beat");
+		if(!lua_isnumber(L, -1))
+		{
+			RETURN_NOT_SANE(ssprintf("Invalid per_beat value in quantum %zu.", i+1));
+		}
+		temp_quanta[i].per_beat= lua_tointeger(L, -1);
+		lua_pop(L, 1);
+		lua_getfield(L, -1, "states");
+		if(!lua_istable(L, -1))
+		{
+			RETURN_NOT_SANE(ssprintf("Invalid states in quantum %zu.", i+1));
+		}
+		if(!load_simple_table(L, lua_gettop(L), max_states,
+				temp_quanta[i].states, static_cast<size_t>(1), max_states, "states",
+				insanity_diagnosis))
+		{
+			RETURN_NOT_SANE(ssprintf("Invalid states in quantum %zu: %s", i+1, insanity_diagnosis.c_str()));
+		}
+		lua_pop(L, 1);
 	}
+	lua_getfield(L, index, "parts_per_beat");
+	if(!lua_isnumber(L, -1))
+	{
+		RETURN_NOT_SANE("Invalid parts_per_beat.");
+	}
+	m_parts_per_beat= lua_tointeger(L, -1);
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
-	m_states.swap(temp_states);
+	m_quanta.swap(temp_quanta);
 	return true;
 }
 

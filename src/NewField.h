@@ -75,69 +75,70 @@ LuaDeclareType(NewSkinHoldPart);
 
 struct QuantizedStateMap
 {
-	// This is used for both taps and holds, thus, holds can be colored by
-	// quantization too.
-	// Notes need to have two things affecting their state:
-	// 1. The quantization.  This is the beat the note is on.
-	// 2. The beat.  This is the current beat of the music.
-	// The range of both is [0 to 1), 0 is included in the range, 1 is not.
-	// For a vivid style noteskin, the quantization and the beat are added
-	// together to calculate the time into the animation.
-	// For a note style noteskin, the quantization is used to pick a set of
-	// states, then the beat is the time into that set of states.
-	// All the states to use are stored in m_states.  Indexing occurs in two
-	// stages:
-	// 1. If the noteskin is vivid style, there is only one entry in m_states.
-	//   Otherwise, the entries are equally spread over the quantization range.
-	//   floor(quantization * m_states.size()) is the index into m_states if the
-	//   noteskin is not vivid.
-	// 2. If the noteskin is vivid, the index into the entry is this:
-	//   floor((quantization + beat) * entry.size())
-	//   If the noteskin is not vivid, the index into the entry is this:
-	//   floor(beat * entry.size())
-	//
-
-	// Worst case for the size of m_states:  48 quantizations, 16 frames per
-	// quantization, 8 bytes per state works out to 6144 bytes.
-	// If there are 10 buttons per noteskin 4 noteskins loaded in the game at
-	// the same time, that works out to 245760 bytes.
+	static const size_t max_quanta= 256;
+	static const size_t max_states= 256;
+	// A QuantizedStateMap has a list of the quantizations the noteskin has.
+	// A quantization occurs a fixed integer number of times per beat and has a
+	// few states for its animation.
+	struct QuantizedStates
+	{
+		size_t per_beat;
+		std::vector<size_t> states;
+	};
 
 	QuantizedStateMap()
 	{
 		clear();
 	}
 
-	// probably a sane limit, anybody going over 256 probably made a mistake in
-	// a loop that generates the map.
-	static const size_t max_state_map_entries= 256;
-
+	QuantizedStates const& calc_quantization(double quantization) const
+	{
+		// Real world use case for solving the fizzbuzz problem.  Find the
+		// largest factor for a number from the entries in a short list.
+		size_t beat_part= static_cast<size_t>(quantization * m_parts_per_beat);
+		for(auto&& quantum : m_quanta)
+		{
+			size_t spacing= static_cast<size_t>(m_parts_per_beat / quantum.per_beat);
+			if(spacing * quantum.per_beat != m_parts_per_beat)
+			{
+				// This quantum is finer than what is supported by the parts per
+				// beat.  Skipping it allows a noteskin author to twiddle the
+				// quantization of the skin by changing the parts per beat without
+				// changing the list of quantizations.
+				continue;
+			}
+			if(beat_part % spacing == 0)
+			{
+				return quantum;
+			}
+		}
+		return m_quanta.back();
+	}
 	size_t calc_state(double quantization, double beat, bool vivid) const
 	{
-		// Vivid can be ignored for calculating entry_index because there should
-		// be only one entry in m_states if the thing is vivid.
-		// Add half an entry to the quantization so that notes are quantized to
-		// the closest entry.  Otherwise, .20 would quantize to 0 with 4 entries.
-		size_t entry_index= static_cast<size_t>(
-			floor((quantization * m_states.size()) + .5)) % m_states.size();
-		std::vector<size_t> const& entry= m_states[entry_index];
-		// Multiplying by a bool is perfectly legal, the bool is either 0 or 1.
-		size_t state_index= static_cast<size_t>(
-			floor(((quantization * vivid) + beat) * entry.size())) % entry.size();
-		return entry[state_index];
-	}
-	void clear()
-	{
-		m_states.resize(1);
-		m_states[0].resize(1);
-		m_states[0][0]= 0;
+		QuantizedStates const& quantum= calc_quantization(quantization);
+		size_t frame_index= static_cast<size_t>(
+			floor(((vivid ? quantization : 0.0) + beat) * quantum.states.size()))
+			% quantum.states.size();
+		return quantum.states[frame_index];
 	}
 	bool load_from_lua(lua_State* L, int index, std::string& insanity_diagnosis);
 	void swap(QuantizedStateMap& other)
 	{
-		m_states.swap(other.m_states);
+		size_t tmp= m_parts_per_beat;
+		m_parts_per_beat= other.m_parts_per_beat;
+		other.m_parts_per_beat= tmp;
+		m_quanta.swap(other.m_quanta);
+	}
+	void clear()
+	{
+		m_parts_per_beat= 1;
+		m_quanta.resize(1);
+		m_quanta[0]= {1, {1}};
 	}
 private:
-	std::vector<std::vector<size_t> > m_states;
+	size_t m_parts_per_beat;
+	std::vector<QuantizedStates> m_quanta;
 };
 
 struct QuantizedTap

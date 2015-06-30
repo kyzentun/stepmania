@@ -1,34 +1,3 @@
--- See explanation where tap_state_map is generated.  This function will
--- probably be moved to some scripts file specific to noteskins so it won't
--- have to be in every noteskin.
-local function generate_state_map_from_quantums(parts_per_beat, quantums)
-	-- Use the last entry as a default to allow a shorter list.  This means a
-	-- noteskin that only goes down to 64ths can pass a parts_per_beat of 48
-	-- and leave off the entries for 96ths and 192nds.
-	local default_quantum= quantums[#quantums].states
-	local state_map= {}
-	for part= 0, parts_per_beat - 1 do
-		for quant_index, quant in ipairs(quantums) do
-			-- spacing is how many parts there are between occurances of the
-			-- current quantization.
-			local spacing= parts_per_beat / quant.per_beat
-			-- If spacing does not come up as an integer, then the modulus won't be
-			-- zero, which means the quantization is finer than the parts per beat
-			-- and should be ignored.  This allows having a table of quantums with
-			-- extra entries, and controlling the fineness by adjusting parts per
-			-- beat.
-			if part % spacing == 0 then
-				state_map[part+1]= quant.states
-				break
-			end
-		end
-		if not state_map[part+1] then
-			state_map[part+1]= default_quantum
-		end
-	end
-	return state_map
-end
-
 -- The noteskin file returns a function that will be called to load the
 -- actors for the noteskin.  The function will be passed a list of buttons.
 -- Each element in button_list is the name of the button that will be used
@@ -44,31 +13,11 @@ return function(button_list)
 	local rots= {Left= 90, Down= 0, Up= 180, Right= 270}
 	-- A state_map tells Stepmania what frames to use for the quantization of
 	-- a note and the current beat.
-	-- Two variables are used to find the frame to use in the state_map:
-	-- 1. The quantization.  2. The current beat of the music.
-	-- The quantization of a note is how far it is from being directly on the
-	-- beat.  A note on beat 5.0 has a quantization of 0.  A note on beat
-	-- 5.75 has a quantization of 0.75.
-	-- The beat is the current beat of the music, shifted to be between 0 and
-	-- 1.  So if the current beat is 2.33, 0.33 is used to find the frame to
+	-- First, Stepmania goes through the list of quanta in the state map to
+	-- find the one that fits how far the note is from directly on the beat.
+	-- Stepmania uses the per_beat field in the quantum to pick which one to
 	-- use.
-	-- First, Stepmania finds the entry for the note's quantization.
-	-- In code, it uses this formula:
-	--   entry_index= floor(quantization * #state_map)
-	-- Long explanation:
-	--   There is one list of frames to use for each quantization the noteskin
-	--   supports.
-	--   A flat noteskin would have only one entry.
-	--   A noteskin that only supports 4ths (0 quantization) and 8ths
-	--   (0.5 quantization) would have two entries.  Everything greater than
-	--   or equal to 0 and less than 0.5 quantization would use the first
-	--   entry, and everything greater than or equal 0.5 and less than 1
-	--   quantization would use the second entry.
-	--   This means that the noteskin system does not impose a quantization
-	--   limit, though other parts of Stepmania do.  It also means that the
-	--   16th after a beat (quantization 0.25) and the 16th before a beat
-	--   (quantization 0.75) can look different in non-vivid noteskins.
-	-- Secondly, Stepmania finds the state in the entry for the current beat.
+	-- Secondly, Stepmania finds the state in the quantum for the current beat.
 	-- The vivid flag is used here to allow vivid noteskins to make different
 	-- quantizations start at different points in the animation.
 	-- In code, it uses this formula:
@@ -89,64 +38,63 @@ return function(button_list)
 	--   If there are two frames, the first frame is used while the beat is
 	--   greater than or equal to 0 and less than 0.5.  The second frame is
 	--   used from 0.5 to 1.
-	-- This example has 4 quantizations.
-	-- common_state_map is for convenience making the noteskin.  Each
+	-- This example has 8 quantizations.
+	-- tap_state_map is for convenience making the noteskin.  Each
 	-- NewSkinPart in each column is allowed to have its own state map, to allow
 	-- them to animate differently, but that is usually not desired.
-	-- To make the state maps slightly more readable, this example first sets
-	-- some variables for the common quantizations.  Then those are used to set
-	-- the entries in the state map.
-
-	-- This generates a state map suitable for dividing a beat into 240 parts.
-	local parts_per_beat= 48
-	-- Factors of 240: 2, 2, 2, 2, 3, 5
 	-- Each quantization occurs a given number of times per beat.
 	-- They must be arranged in ascending order of times per beat for the
 	-- correct quantization to be assigned.
-	local tap_quantums= {
-		{per_beat= 1, states= {1, 2}}, -- 4th
-		{per_beat= 2, states= {3, 4}}, -- 8th
-		{per_beat= 3, states= {5, 6}}, -- 12th
-		{per_beat= 4, states= {7, 8}}, -- 16th
-		{per_beat= 6, states= {9, 10}}, -- 24th
-		{per_beat= 8, states= {11, 12}}, -- 32nd
-		{per_beat= 12, states= {13, 14}}, -- 48th
-		{per_beat= 16, states= {15, 16}}, -- 64th
+	-- The states element is a list of frames to use for animating the tap when
+	-- it has the given quantization.
+	-- If the per_beat field of a quantum is not a factor of parts_per_beat, it
+	-- will not be used.
+	-- The last entry in quanta will be used for parts that don't fit a known
+	-- quantization.
+	-- parts_per_beat must be the lowest common multiple of the per_beat fields
+	-- of the quanta.  If parts_per_beat is not the lowest common multiple, the
+	-- quanta that it is not a multiple of will be ignored.
+	local parts_per_beat= 48
+	local tap_state_map= {
+		parts_per_beat= parts_per_beat, quanta= {
+			{per_beat= 1, states= {1, 2}}, -- 4th
+			{per_beat= 2, states= {3, 4}}, -- 8th
+			{per_beat= 3, states= {5, 6}}, -- 12th
+			{per_beat= 4, states= {7, 8}}, -- 16th
+			{per_beat= 6, states= {9, 10}}, -- 24th
+			{per_beat= 8, states= {11, 12}}, -- 32nd
+			{per_beat= 12, states= {13, 14}}, -- 48th
+			{per_beat= 16, states= {15, 16}}, -- 64th
+		},
 	}
-	-- generate_state_map_from_quantums is a convenience function for using a
-	-- list of quantizations to generate a state map for the note.  Fill
-	-- tap_quantums with the quantizations you want to support, then call
-	-- generate_state_map_from_quantums to create the state map.
-	-- If a quantum is not a factor of parts_per_beat, it will not be used.
-	-- The last entry in tap_quantums will be used for parts that don't fit a
-	-- known quantization.
-	local tap_state_map= generate_state_map_from_quantums(parts_per_beat, tap_quantums)
 	-- Mines only have a single frame in the graphics.
-	local mine_state_map= {{1}}
+	local mine_state_map= {
+		parts_per_beat= 1, quanta= {{per_beat= 1, states= {1}}}}
 	-- Holds have active and inactive states, so they need a different state
 	-- map.
-	local hold_quantums= {
-		{per_beat= 1, states= {1, 2}}, -- 4th
-		{per_beat= 2, states= {5, 6}}, -- 8th
-		{per_beat= 3, states= {9, 10}}, -- 12th
-		{per_beat= 4, states= {13, 14}}, -- 16th
-		{per_beat= 6, states= {17, 18}}, -- 24th
-		{per_beat= 8, states= {21, 22}}, -- 32nd
-		{per_beat= 12, states= {25, 26}}, -- 48th
-		{per_beat= 16, states= {29, 30}}, -- 64th
+	local active_state_map= {
+		parts_per_beat= parts_per_beat, quanta= {
+			{per_beat= 1, states= {1, 2}}, -- 4th
+			{per_beat= 2, states= {5, 6}}, -- 8th
+			{per_beat= 3, states= {9, 10}}, -- 12th
+			{per_beat= 4, states= {13, 14}}, -- 16th
+			{per_beat= 6, states= {17, 18}}, -- 24th
+			{per_beat= 8, states= {21, 22}}, -- 32nd
+			{per_beat= 12, states= {25, 26}}, -- 48th
+			{per_beat= 16, states= {29, 30}}, -- 64th
+		},
 	}
-	local active_state_map= generate_state_map_from_quantums(parts_per_beat, hold_quantums)
-	local inactive_state_map= {}
+	local inactive_quanta= {}
 	-- To make creating the inactive state map easier, the inactive states are
 	-- assumed to be the two states after the active states.
-	for ssi= 1, #active_state_map do
-		local act_entry= active_state_map[ssi]
-		local entry= {}
-		for di= 1, #act_entry do
-			entry[di]= act_entry[di] + 2
+	for i, quantum in ipairs(active_state_map.quanta) do
+		local states= {}
+		for s, state in ipairs(quantum.states) do
+			states[s]= state + 2
 		end
-		inactive_state_map[ssi]= entry
+		inactive_quanta[i]= {per_beat= quantum.per_beat, states= states}
 	end
+	local inactive_state_map= {parts_per_beat= parts_per_beat, quanta= inactive_quanta}
 	-- Taps are handled by a quantized_tap structure.  A quantized_tap contains
 	-- an actor for the tap, a state map to use to quantize it, and a vivid
 	-- memory of its world that was destroyed.
@@ -262,7 +210,7 @@ return function(button_list)
 			rotations= {
 				NewSkinTapPart_Tap= rots[button],
 				NewSkinTapPart_Mine= 0,
-				NewSkinTapPart_Lift= 0,
+				NewSkinTapPart_Lift= rots[button],
 			},
 		}
 	end

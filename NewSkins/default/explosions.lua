@@ -72,6 +72,7 @@ return function(button_list)
 					end
 				else
 					self:stopeffect()
+						:linear(0.06):diffusealpha(0)
 				end
 			end
 		}

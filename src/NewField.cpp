@@ -27,7 +27,7 @@ using std::unordered_set;
 using std::vector;
 
 static const double note_size= 64.0;
-static const double speed_multiplier= 6.0;
+static double speed_multiplier= 4.0;
 
 static const char* NewSkinTapPartNames[] = {
 	"Tap",
@@ -55,6 +55,15 @@ static const char* NewSkinHoldPartNames[] = {
 };
 XToString(NewSkinHoldPart);
 LuaXType(NewSkinHoldPart);
+
+static const char* TexCoordFlipModeNames[] = {
+	"None",
+	"X",
+	"Y",
+	"XY",
+};
+XToString(TexCoordFlipMode);
+LuaXType(TexCoordFlipMode);
 
 size_t get_table_len(lua_State* L, int index, size_t max_entries,
 	string const& table_name, string& insanity_diagnosis)
@@ -328,6 +337,17 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, string const& load_di
 			}
 		}
 		temp_parts[part]= as_tex;
+	}
+	lua_getfield(L, index, "flip");
+	m_flip= TCFM_None;
+	if(lua_isstring(L, -1))
+	{
+		m_flip= Enum::Check<TexCoordFlipMode>(L, -1, true, true);
+		if(m_flip >= NUM_TexCoordFlipMode)
+		{
+			LuaHelpers::ReportScriptErrorFmt("Invalid flip mode %s", lua_tostring(L, -1));
+			m_flip= TCFM_None;
+		}
 	}
 	lua_getfield(L, index, "vivid");
 	m_vivid= lua_toboolean(L, -1);
@@ -844,7 +864,10 @@ bool NewSkinLoader::load_into_data(vector<string> const& button_list,
 REGISTER_ACTOR_CLASS(NewFieldColumn);
 
 NewFieldColumn::NewFieldColumn()
-	:m_curr_beat(0.0f), m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
+	:m_quantization_multiplier(1.0f), m_quantization_offset(0.0f),
+	 m_curr_beat(0.0f), m_pixels_visible_before_beat(128.0f),
+	 m_pixels_visible_after_beat(1024.0f),
+	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
 {
 }
 
@@ -868,6 +891,16 @@ void NewFieldColumn::update_displayed_beat(double beat)
 	{
 		m_curr_beat= beat;
 	}
+}
+
+double NewFieldColumn::calc_y_offset_for_beat(double beat)
+{
+	return beat * note_size * speed_multiplier;
+}
+
+double NewFieldColumn::calc_beat_for_y_offset(double y_offset)
+{
+	return y_offset / (speed_multiplier * note_size);
 }
 
 void NewFieldColumn::UpdateInternal(float delta)
@@ -1072,8 +1105,27 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 	static strip_buffer verts_to_draw;
 	verts_to_draw.init();
 	static const double y_step= 4.0;
-	hold_texture_handler tex_handler(note_size, y, len, data.rect->top, data.rect->bottom);
-	double const tex_center= (data.rect->left + data.rect->right) * .5;
+	double tex_top= data.rect->top;
+	double tex_bottom= data.rect->bottom;
+	double tex_left= data.rect->left;
+	double tex_right= data.rect->right;
+	switch(data.flip)
+	{
+		case TCFM_X:
+			std::swap(tex_left, tex_right);
+			break;
+		case TCFM_XY:
+			std::swap(tex_left, tex_right);
+			std::swap(tex_top, tex_bottom);
+			break;
+		case TCFM_Y:
+			std::swap(tex_top, tex_bottom);
+			break;
+		default:
+			break;
+	}
+	hold_texture_handler tex_handler(note_size, y, len, tex_top, tex_bottom);
+	double const tex_center= (tex_left + tex_right) * .5;
 	DISPLAY->ClearAllTextures();
 	bool last_vert_set= false;
 	vector<double> tex_coords;
@@ -1090,7 +1142,7 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 		const RageVector3 center_vert(x, curr_y, 0);
 		const RageVector3 right_vert(x + (note_size * .5), curr_y, 0);
 		const RageColor color(1.0, 1.0, 1.0, 1.0);
-#define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, data.rect->left, tex_center, data.rect->right
+#define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
 		{
 			add_vert_strip(tex_coords[i], add_vert_strip_args);
@@ -1133,12 +1185,25 @@ void NewFieldColumn::update_active_hold(TapNote const& tap)
 	}
 }
 
+double NewFieldColumn::get_hold_draw_beat(TapNote const& tap, double const hold_beat)
+{
+	double const last_held= tap.HoldResult.GetLastHeldBeat();
+	if(last_held > hold_beat)
+	{
+		if(fabs(last_held - m_curr_beat) < .01)
+		{
+			return m_curr_beat;
+		}
+		return last_held;
+	}
+	return hold_beat;
+}
+
 void NewFieldColumn::DrawPrimitives()
 {
 	m_dist_to_upcoming_arrow= 1000.0;
 	m_prev_active_hold= m_active_hold;
 	m_active_hold= nullptr;
-	static float const view_beats= 8;
 	// Holds and taps are put into different lists because they have to be
 	// rendered in different phases.  All hold bodies must be drawn first, then
 	// all taps, so the taps appear on top of the hold bodies and are not
@@ -1146,8 +1211,10 @@ void NewFieldColumn::DrawPrimitives()
 	vector<NoteData::TrackMap::const_iterator> holds;
 	vector<NoteData::TrackMap::const_iterator> taps;
 	NoteData::TrackMap::const_iterator begin, end;
-	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(m_curr_beat),
-		BeatToNoteRow(m_curr_beat + view_beats), begin, end);
+	double first_beat= m_curr_beat - calc_beat_for_y_offset(m_pixels_visible_before_beat);
+	double last_beat= m_curr_beat + calc_beat_for_y_offset(m_pixels_visible_after_beat);
+	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
+		BeatToNoteRow(last_beat), begin, end);
 	for(; begin != end; ++begin)
 	{
 		const TapNote& tn= begin->second;
@@ -1188,14 +1255,17 @@ void NewFieldColumn::DrawPrimitives()
 		int hold_row= holdit->first;
 		TapNote const& tn= holdit->second;
 		double const hold_beat= NoteRowToBeat(hold_row);
-		double const quantization= fmodf(hold_beat, 1.0);
+		double const quantization= quantization_for_beat(hold_beat);
 		bool active= tn.HoldResult.bActive;
 		QuantizedHoldRenderData data;
 		m_newskin->get_hold_render_data(tn.subType, active, quantization, beat, data);
+		double hold_draw_beat= get_hold_draw_beat(tn, hold_beat);
+		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
 		{
-			double y= (hold_beat - m_curr_beat) * note_size * speed_multiplier;
-			draw_hold(data, 0.0, y, NoteRowToBeat(tn.iDuration) * speed_multiplier);
+			double y= calc_y_offset_for_beat(hold_draw_beat - m_curr_beat);
+			draw_hold(data, 0.0, y, (NoteRowToBeat(tn.iDuration) - passed_amount)
+				* speed_multiplier);
 		}
 	}
 	for(auto&& tapit : taps)
@@ -1205,10 +1275,11 @@ void NewFieldColumn::DrawPrimitives()
 		update_upcoming(tap_row);
 		update_active_hold(tn);
 		double const tap_beat= NoteRowToBeat(tap_row);
-		double const quantization= fmodf(tap_beat, 1.0);
+		double const quantization= quantization_for_beat(tap_beat);
 		NewSkinTapPart part= NSTP_Tap;
 		NewSkinTapOptionalPart head_part= NewSkinTapOptionalPart_Invalid;
 		NewSkinTapOptionalPart tail_part= NewSkinTapOptionalPart_Invalid;
+		double draw_beat= tap_beat;
 		switch(tn.type)
 		{
 			case TapNoteType_Mine:
@@ -1218,6 +1289,7 @@ void NewFieldColumn::DrawPrimitives()
 				part= NSTP_Lift;
 				break;
 			case TapNoteType_HoldHead:
+				draw_beat= get_hold_draw_beat(tn, tap_beat);
 				part= NewSkinTapPart_Invalid;
 				switch(tn.subType)
 				{
@@ -1261,7 +1333,7 @@ void NewFieldColumn::DrawPrimitives()
 			// noteskin doesn't have them.
 			if(act != nullptr)
 			{
-				double y= (tap_beat - m_curr_beat) * note_size * speed_multiplier;
+				double y= calc_y_offset_for_beat(draw_beat - m_curr_beat);
 				act->SetY(y);
 				act->Draw();
 			}
@@ -1326,6 +1398,16 @@ void NewField::draw_layer_set(std::vector<NewSkinLayer>& layers)
 	for(auto&& lay : layers)
 	{
 		lay.Draw();
+	}
+}
+
+void NewField::push_columns_to_lua(lua_State* L)
+{
+	lua_createtable(L, m_columns.size(), 0);
+	for(size_t c= 0; c < m_columns.size(); ++c)
+	{
+		m_columns[c].PushSelf(L);
+		lua_rawseti(L, -2, c+1);
 	}
 }
 
@@ -1506,7 +1588,6 @@ static Message create_did_message(size_t column, bool bright)
 
 void NewField::did_tap_note(size_t column, TapNoteScore tns, bool bright)
 {
-	// TODO:  Write a move constructor for Message.
 	Message msg(create_did_message(column, bright));
 	msg.SetParam("tap_note_score", tns);
 	m_newskin.pass_message_to_all_layers(column, msg);
@@ -1549,11 +1630,26 @@ void NewField::set_note_upcoming(size_t column, double distance)
 // lua start
 struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
+	static int set_quantization_multiplier(T* p, lua_State* L)
+	{
+		p->m_quantization_multiplier= FArg(1);
+		COMMON_RETURN_SELF;
+	}
+	DEFINE_METHOD(get_quantization_multiplier, m_quantization_multiplier);
+	static int set_quantization_offset(T* p, lua_State* L)
+	{
+		p->m_quantization_offset= FArg(1);
+		COMMON_RETURN_SELF;
+	}
+	DEFINE_METHOD(get_quantization_offset, m_quantization_offset);
 	LunaNewFieldColumn()
 	{
-		
+		ADD_GET_SET_METHODS(quantization_multiplier);
+		ADD_GET_SET_METHODS(quantization_offset);
 	}
 };
+LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
+
 struct LunaNewField : Luna<NewField>
 {
 	static int get_curr_beat(T* p, lua_State* L)
@@ -1564,18 +1660,28 @@ struct LunaNewField : Luna<NewField>
 	{
 		COMMON_RETURN_SELF;
 	}
+	static int set_speed(T* p, lua_State* L)
+	{
+		speed_multiplier= FArg(1);
+		COMMON_RETURN_SELF;
+	}
 	static int set_steps(T* p, lua_State* L)
 	{
 		Steps* data= Luna<Steps>::check(L, 1);
 		p->set_steps(data);
 		COMMON_RETURN_SELF;
 	}
+	static int get_columns(T* p, lua_State* L)
+	{
+		p->push_columns_to_lua(L);
+		return 1;
+	}
 	LunaNewField()
 	{
+		ADD_METHOD(set_speed);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_METHOD(set_steps);
+		ADD_METHOD(get_columns);
 	}
 };
-
-LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
 LUA_REGISTER_DERIVED_CLASS(NewField, ActorFrame);

@@ -11,6 +11,16 @@ return function(button_list)
 	-- rots is a convenience conversion table to easily take care of buttons
 	-- that should be rotated.
 	local rots= {Left= 90, Down= 0, Up= 180, Right= 270}
+	local hold_flips= {
+		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
+		Down= "TexCoordFlipMode_None", Up= "TexCoordFlipMode_Y",
+	}
+	local hold_buttons= {
+		Left= "left", Right= "left", Down= "down", Up= "down",
+	}
+	local roll_buttons= {
+		Left= "left", Right= "left", Down= "down", Up= "up",
+	}
 	-- A state_map tells Stepmania what frames to use for the quantization of
 	-- a note and the current beat.
 	-- First, Stepmania goes through the list of quanta in the state map to
@@ -123,6 +133,8 @@ return function(button_list)
 	-- rotated.
 	local columns= {}
 	for i, button in ipairs(button_list) do
+		local hold_tex= hold_buttons[button] .. "_hold 8x4.png"
+		local roll_tex= roll_buttons[button] .. "_roll 8x4.png"
 		columns[i]= {
 			taps= {
 				NewSkinTapPart_Tap= {
@@ -186,22 +198,26 @@ return function(button_list)
 						-- frame dimensions.  The same frame from each will be rendered,
 						-- in order.  This replaces the HoldActiveIsAddLayer flag that
 						-- was in the old noteskin format.
-						textures= {button:lower() .. "_hold 8x4.png"},
+						textures= {hold_tex},
+						flip= hold_flips[button],
 					},
 					-- This is the quantized_hold for the active state of holds.
 					{
 						state_map= active_state_map,
-						textures= {button:lower() .. "_hold 8x4.png"},
+						textures= {hold_tex},
+						flip= hold_flips[button],
 					},
 				},
 				TapNoteSubType_Roll= {
 					{
 						state_map= inactive_state_map,
-						textures= {button:lower() .. "_hold 8x4.png"},
+						textures= {roll_tex},
+						flip= hold_flips[button],
 					},
 					{
 						state_map= active_state_map,
-						textures= {button:lower() .. "_hold 8x4.png"},
+						textures= {roll_tex},
+						flip= hold_flips[button],
 					},
 				},
 			},

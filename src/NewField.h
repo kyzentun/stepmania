@@ -95,7 +95,7 @@ struct QuantizedStateMap
 	{
 		// Real world use case for solving the fizzbuzz problem.  Find the
 		// largest factor for a number from the entries in a short list.
-		size_t beat_part= static_cast<size_t>(quantization * m_parts_per_beat);
+		size_t beat_part= static_cast<size_t>((quantization * m_parts_per_beat) + .5);
 		for(auto&& quantum : m_quanta)
 		{
 			size_t spacing= static_cast<size_t>(m_parts_per_beat / quantum.per_beat);
@@ -155,11 +155,24 @@ struct QuantizedTap
 	bool load_from_lua(lua_State* L, int index, std::string& insanity_diagnosis);
 };
 
+enum TexCoordFlipMode
+{
+	TCFM_None,
+	TCFM_X,
+	TCFM_Y,
+	TCFM_XY,
+	NUM_TexCoordFlipMode,
+	TexCoordFlipMode_Invalid
+};
+const RString& TexCoordFlipModeToString(TexCoordFlipMode tcfm);
+LuaDeclareType(TexCoordFlipMode);
+
 struct QuantizedHoldRenderData
 {
 	QuantizedHoldRenderData() { clear(); }
 	std::vector<RageTexture*> parts;
 	RectF const* rect;
+	TexCoordFlipMode flip;
 	void clear()
 	{
 		parts.clear();
@@ -172,6 +185,7 @@ struct QuantizedHold
 	static const size_t max_hold_layers= 32;
 	QuantizedStateMap m_state_map;
 	std::vector<RageTexture*> m_parts;
+	TexCoordFlipMode m_flip;
 	bool m_vivid;
 	void get_quantized(double quantization, double beat, QuantizedHoldRenderData& ret)
 	{
@@ -184,6 +198,7 @@ struct QuantizedHold
 				ret.rect= m_parts[i]->GetTextureCoordRect(state);
 			}
 		}
+		ret.flip= m_flip;
 	}
 	bool load_from_lua(lua_State* L, int index, std::string const& load_dir, std::string& insanity_diagnosis);
 };
@@ -362,8 +377,19 @@ struct NewFieldColumn : ActorFrame
 	void set_column_info(size_t column, NewSkinColumn* newskin,
 		const NoteData* note_data, const TimingData* timing_data, double x);
 
+	double get_hold_draw_beat(TapNote const& tap, double const hold_beat);
 	void draw_hold(QuantizedHoldRenderData& data, double x, double y, double len);
 	void update_displayed_beat(double beat);
+	double calc_y_offset_for_beat(double beat);
+	double calc_y_offset_for_curr_beat()
+	{
+		return calc_y_offset_for_beat(m_curr_beat);
+	}
+	double calc_beat_for_y_offset(double y_offset);
+	double quantization_for_beat(double beat)
+	{
+		return fmodf((beat * m_quantization_multiplier) + m_quantization_offset, 1.0);
+	}
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
@@ -376,10 +402,14 @@ struct NewFieldColumn : ActorFrame
 
 	bool m_use_game_music_beat;
 	double m_dist_to_upcoming_arrow;
+	double m_quantization_multiplier;
+	double m_quantization_offset;
 	TapNote const* m_active_hold;
 	TapNote const* m_prev_active_hold;
 private:
 	float m_curr_beat;
+	float m_pixels_visible_before_beat;
+	float m_pixels_visible_after_beat;
 	size_t m_column;
 	NewSkinColumn* m_newskin;
 	const NoteData* m_note_data;
@@ -398,6 +428,8 @@ struct NewField : ActorFrame
 
 	virtual void PushSelf(lua_State *L);
 	virtual NewField* Copy() const;
+
+	void push_columns_to_lua(lua_State* L);
 
 	void clear_steps();
 	void set_steps(Steps* data);

@@ -24,20 +24,21 @@ return function(button_list)
 					self:zoom(1)
 				end
 			end,
-			-- The Upcoming command happens every frame, to update the distance in
-			-- beats to the nearest note in the column.  If the notefield does not
+			-- The Upcoming command happens every frame, to update the distance to
+			-- the next note in the column.  A note at the edge of the notefield's
+			-- draw distance has a distance of 1.  If the notefield does not
 			-- detect a note within its draw distance, it sends a distance of 1000.
 			-- The draw distance of the notefield varies with modifiers such as
 			-- speed and boomerang, and might be controlled by lua.
-			-- The SM 5.0.x notefield ShowNoteUpcoming and HideNoteUpcoming
+			-- The SM 5.0.x notefield had ShowNoteUpcoming and HideNoteUpcoming
 			-- commands with no distance information.
 			-- Because this command is executed while drawing the notes layer,
 			-- layers that are beneath the notes will have the distance from the
 			-- previous frame, while layers above the notes will have the distance
 			-- for the current frame.
 			UpcomingCommand= function(self, param)
-				if param.distance < 4 then
-					self:diffuse(lerp_color(param.distance / 4, white, red))
+				if param.distance < 1 then
+					self:diffuse(lerp_color(param.distance, white, red))
 				else
 					self:diffuse(white)
 				end

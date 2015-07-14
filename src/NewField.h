@@ -393,7 +393,7 @@ struct NewFieldColumn : ActorFrame
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
-	void update_upcoming(int row);
+	void update_upcoming(int row, double dist_factor);
 	void update_active_hold(TapNote const& tap);
 	virtual void DrawPrimitives();
 
@@ -439,7 +439,7 @@ struct NewField : ActorFrame
 
 	void did_tap_note(size_t column, TapNoteScore tns, bool bright);
 	void did_hold_note(size_t column, HoldNoteScore hns, bool bright);
-	void set_hold_status(size_t column, TapNote const* tap, bool start);
+	void set_hold_status(size_t column, TapNote const* tap, bool start, bool end);
 	void set_pressed(size_t column, bool on);
 	void set_note_upcoming(size_t column, double distance);
 

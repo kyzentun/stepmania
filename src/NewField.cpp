@@ -865,6 +865,7 @@ REGISTER_ACTOR_CLASS(NewFieldColumn);
 
 NewFieldColumn::NewFieldColumn()
 	:m_quantization_multiplier(1.0f), m_quantization_offset(0.0f),
+	 m_active_hold(nullptr), m_prev_active_hold(nullptr),
 	 m_curr_beat(0.0f), m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
@@ -1168,9 +1169,9 @@ bool NewFieldColumn::EarlyAbortDraw() const
 	return m_newskin == nullptr || m_note_data == nullptr || m_timing_data == nullptr;
 }
 
-void NewFieldColumn::update_upcoming(int row)
+void NewFieldColumn::update_upcoming(int row, double dist_factor)
 {
-	double const dist= NoteRowToBeat(row) - m_curr_beat;
+	double const dist= (NoteRowToBeat(row) - m_curr_beat) * dist_factor;
 	if(dist > 0 && dist < m_dist_to_upcoming_arrow)
 	{
 		m_dist_to_upcoming_arrow= dist;
@@ -1213,6 +1214,7 @@ void NewFieldColumn::DrawPrimitives()
 	NoteData::TrackMap::const_iterator begin, end;
 	double first_beat= m_curr_beat - calc_beat_for_y_offset(m_pixels_visible_before_beat);
 	double last_beat= m_curr_beat + calc_beat_for_y_offset(m_pixels_visible_after_beat);
+	double dist_factor= 1.0 / (last_beat - m_curr_beat);
 	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
 		BeatToNoteRow(last_beat), begin, end);
 	for(; begin != end; ++begin)
@@ -1256,7 +1258,7 @@ void NewFieldColumn::DrawPrimitives()
 		TapNote const& tn= holdit->second;
 		double const hold_beat= NoteRowToBeat(hold_row);
 		double const quantization= quantization_for_beat(hold_beat);
-		bool active= tn.HoldResult.bActive;
+		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
 		m_newskin->get_hold_render_data(tn.subType, active, quantization, beat, data);
 		double hold_draw_beat= get_hold_draw_beat(tn, hold_beat);
@@ -1272,7 +1274,7 @@ void NewFieldColumn::DrawPrimitives()
 	{
 		int tap_row= tapit->first;
 		TapNote const& tn= tapit->second;
-		update_upcoming(tap_row);
+		update_upcoming(tap_row, dist_factor);
 		update_active_hold(tn);
 		double const tap_beat= NoteRowToBeat(tap_row);
 		double const quantization= quantization_for_beat(tap_beat);
@@ -1385,8 +1387,10 @@ void NewField::DrawPrimitives()
 		if(m_columns[c].m_active_hold != nullptr ||
 			m_columns[c].m_prev_active_hold != nullptr)
 		{
-			set_hold_status(c, m_columns[c].m_active_hold,
-				m_columns[c].m_prev_active_hold == nullptr);
+			bool curr_is_null= m_columns[c].m_active_hold == nullptr;
+			bool prev_is_null= m_columns[c].m_prev_active_hold == nullptr;
+			TapNote const* pass= curr_is_null ? m_columns[c].m_prev_active_hold : m_columns[c].m_active_hold;
+			set_hold_status(c, pass, prev_is_null, curr_is_null);
 		}
 	}
 	draw_layer_set(m_newskin.m_layers_above_notes);
@@ -1600,7 +1604,7 @@ void NewField::did_hold_note(size_t column, HoldNoteScore hns, bool bright)
 	m_newskin.pass_message_to_all_layers(column, msg);
 }
 
-void NewField::set_hold_status(size_t column, TapNote const* tap, bool start)
+void NewField::set_hold_status(size_t column, TapNote const* tap, bool start, bool end)
 {
 	Message msg("Hold");
 	if(tap != nullptr)
@@ -1608,6 +1612,7 @@ void NewField::set_hold_status(size_t column, TapNote const* tap, bool start)
 		msg.SetParam("type", tap->subType);
 		msg.SetParam("life", tap->HoldResult.fLife);
 		msg.SetParam("start", start);
+		msg.SetParam("finished", end);
 	}
 	m_newskin.pass_message_to_all_layers(column, msg);
 }

@@ -401,11 +401,21 @@ struct NewFieldColumn : ActorFrame
 	virtual NewFieldColumn* Copy() const;
 
 	bool m_use_game_music_beat;
-	double m_dist_to_upcoming_arrow;
+
+	struct column_status
+	{
+		column_status()
+			:active_hold(nullptr), prev_active_hold(nullptr)
+		{}
+		double dist_to_upcoming_arrow;
+		TapNote const* active_hold;
+		TapNote const* prev_active_hold;
+	};
+	column_status m_status;
+
 	double m_quantization_multiplier;
 	double m_quantization_offset;
-	TapNote const* m_active_hold;
-	TapNote const* m_prev_active_hold;
+
 private:
 	float m_curr_beat;
 	float m_pixels_visible_before_beat;

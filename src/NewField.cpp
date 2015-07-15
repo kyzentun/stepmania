@@ -865,7 +865,6 @@ REGISTER_ACTOR_CLASS(NewFieldColumn);
 
 NewFieldColumn::NewFieldColumn()
 	:m_quantization_multiplier(1.0f), m_quantization_offset(0.0f),
-	 m_active_hold(nullptr), m_prev_active_hold(nullptr),
 	 m_curr_beat(0.0f), m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
@@ -1172,9 +1171,9 @@ bool NewFieldColumn::EarlyAbortDraw() const
 void NewFieldColumn::update_upcoming(int row, double dist_factor)
 {
 	double const dist= (NoteRowToBeat(row) - m_curr_beat) * dist_factor;
-	if(dist > 0 && dist < m_dist_to_upcoming_arrow)
+	if(dist > 0 && dist < m_status.dist_to_upcoming_arrow)
 	{
-		m_dist_to_upcoming_arrow= dist;
+		m_status.dist_to_upcoming_arrow= dist;
 	}
 }
 
@@ -1182,7 +1181,7 @@ void NewFieldColumn::update_active_hold(TapNote const& tap)
 {
 	if(tap.subType != TapNoteSubType_Invalid && tap.HoldResult.bActive)
 	{
-		m_active_hold= &tap;
+		m_status.active_hold= &tap;
 	}
 }
 
@@ -1202,9 +1201,9 @@ double NewFieldColumn::get_hold_draw_beat(TapNote const& tap, double const hold_
 
 void NewFieldColumn::DrawPrimitives()
 {
-	m_dist_to_upcoming_arrow= 1000.0;
-	m_prev_active_hold= m_active_hold;
-	m_active_hold= nullptr;
+	m_status.dist_to_upcoming_arrow= 1000.0;
+	m_status.prev_active_hold= m_status.active_hold;
+	m_status.active_hold= nullptr;
 	// Holds and taps are put into different lists because they have to be
 	// rendered in different phases.  All hold bodies must be drawn first, then
 	// all taps, so the taps appear on top of the hold bodies and are not
@@ -1381,15 +1380,15 @@ void NewField::DrawPrimitives()
 	for(size_t c= 0; c < m_columns.size(); ++c)
 	{
 		m_columns[c].Draw();
-		set_note_upcoming(c, m_columns[c].m_dist_to_upcoming_arrow);
+		set_note_upcoming(c, m_columns[c].m_status.dist_to_upcoming_arrow);
 		// The hold status should be updated if there is a currently active hold
 		// or if there was one last frame.
-		if(m_columns[c].m_active_hold != nullptr ||
-			m_columns[c].m_prev_active_hold != nullptr)
+		if(m_columns[c].m_status.active_hold != nullptr ||
+			m_columns[c].m_status.prev_active_hold != nullptr)
 		{
-			bool curr_is_null= m_columns[c].m_active_hold == nullptr;
-			bool prev_is_null= m_columns[c].m_prev_active_hold == nullptr;
-			TapNote const* pass= curr_is_null ? m_columns[c].m_prev_active_hold : m_columns[c].m_active_hold;
+			bool curr_is_null= m_columns[c].m_status.active_hold == nullptr;
+			bool prev_is_null= m_columns[c].m_status.prev_active_hold == nullptr;
+			TapNote const* pass= curr_is_null ? m_columns[c].m_status.prev_active_hold : m_columns[c].m_status.active_hold;
 			set_hold_status(c, pass, prev_is_null, curr_is_null);
 		}
 	}

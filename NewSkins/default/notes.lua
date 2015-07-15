@@ -15,6 +15,10 @@ return function(button_list)
 		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
 		Down= "TexCoordFlipMode_None", Up= "TexCoordFlipMode_Y",
 	}
+	local roll_flips= {
+		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
+		Down= "TexCoordFlipMode_None", Up= "TexCoordFlipMode_None",
+	}
 	local hold_buttons= {
 		Left= "left", Right= "left", Down= "down", Up= "down",
 	}
@@ -212,12 +216,12 @@ return function(button_list)
 					{
 						state_map= inactive_state_map,
 						textures= {roll_tex},
-						flip= hold_flips[button],
+						flip= roll_flips[button],
 					},
 					{
 						state_map= active_state_map,
 						textures= {roll_tex},
-						flip= hold_flips[button],
+						flip= roll_flips[button],
 					},
 				},
 			},

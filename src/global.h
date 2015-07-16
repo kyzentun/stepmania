@@ -240,6 +240,8 @@ float roundf( float f ) { if( f < 0.0f ) return truncf( f-0.5f ); return truncf(
 inline float strtof( const char *s, char **se ) { return (float) strtod( s, se ); }
 #endif
 
+#define UNUSED(v) (void)(v);
+
 /* Don't include our own headers here, since they tend to change often. */
 
 #endif

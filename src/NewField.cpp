@@ -261,6 +261,7 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 		RETURN_NOT_SANE("Error loading actor.");
 	}
 	m_actor.Load(act);
+	m_frame.AddChild(m_actor);
 	lua_getfield(L, index, "vivid");
 	m_vivid= lua_toboolean(L, -1);
 #undef RETURN_NOT_SANE
@@ -362,10 +363,7 @@ Actor* NewSkinColumn::get_tap_actor(NewSkinTapPart type, double quantization, do
 {
 	const size_t type_index= type;
 	ASSERT_M(type < m_taps.size(), "Invalid NewSkinTapPart type.");
-	Actor* act= m_taps[type_index].get_quantized(quantization, beat);
-	const double rot= m_rotations[type_index];
-	act->SetBaseRotationZ(rot);
-	return act;
+	return m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]);
 }
 
 Actor* NewSkinColumn::get_optional_actor(NewSkinTapOptionalPart type, double quantization, double beat)
@@ -385,10 +383,7 @@ Actor* NewSkinColumn::get_optional_actor(NewSkinTapOptionalPart type, double qua
 		}
 		return nullptr;
 	}
-	Actor* act= tap->get_quantized(quantization, beat);
-	const double rot= m_rotations[type_index];
-	act->SetBaseRotationZ(rot);
-	return act;
+	return tap->get_quantized(quantization, beat, m_rotations[type_index]);
 }
 
 void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type, bool active, double quantization, double beat, QuantizedHoldRenderData& data)
@@ -505,18 +500,18 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 
 void NewSkinLayer::UpdateInternal(float delta)
 {
-	for(auto&& act : m_actors)
+	for(auto&& act : m_frames)
 	{
-		act->Update(delta);
+		act.Update(delta);
 	}
 	ActorFrame::UpdateInternal(delta);
 }
 
 void NewSkinLayer::DrawPrimitives()
 {
-	for(auto&& act : m_actors)
+	for(auto&& act : m_frames)
 	{
-		act->Draw();
+		act.Draw();
 	}
 	ActorFrame::DrawPrimitives();
 }
@@ -531,6 +526,7 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 	{
 		RETURN_NOT_SANE(ssprintf("Invalid number of columns: %s", insanity_diagnosis.c_str()));
 	}
+	m_frames.resize(num_columns);
 	m_actors.resize(num_columns);
 	for(size_t c= 0; c < num_columns; ++c)
 	{
@@ -549,7 +545,10 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 		{
 			RETURN_NOT_SANE("Error loading actor.");
 		}
+		// The actors have to be wrapped inside of frames so that mod transforms
+		// can be applied without stomping the rotation the noteskin supplies.
 		m_actors[c].Load(act);
+		m_frames[c].AddChild(m_actors[c]);
 	}
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
@@ -558,9 +557,17 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 
 void NewSkinLayer::position_columns_to_info(vector<double>& positions)
 {
-	for(size_t c= 0; c < m_actors.size() && c < positions.size(); ++c)
+	for(size_t c= 0; c < m_frames.size() && c < positions.size(); ++c)
 	{
-		m_actors[c]->SetX(positions[c]);
+		m_frames[c].SetX(positions[c]);
+	}
+}
+
+void NewSkinLayer::transform_columns(vector<transform>& positions)
+{
+	for(size_t c= 0; c < m_frames.size() && c < positions.size(); ++c)
+	{
+		m_frames[c].set_transform(positions[c]);
 	}
 }
 
@@ -864,11 +871,15 @@ bool NewSkinLoader::load_into_data(vector<string> const& button_list,
 REGISTER_ACTOR_CLASS(NewFieldColumn);
 
 NewFieldColumn::NewFieldColumn()
-	:m_quantization_multiplier(1.0f), m_quantization_offset(0.0f),
+	:m_quantization_multiplier(&m_mod_manager, 1.0),
+	 m_quantization_offset(&m_mod_manager, 0.0),
+	 m_pos_mod(&m_mod_manager, 0.0), m_rot_mod(&m_mod_manager, 0.0),
+	 m_zoom_mod(&m_mod_manager, 1.0),
 	 m_curr_beat(0.0f), m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
 {
+	m_quantization_multiplier.get_value().set_value_instant(1.0);
 }
 
 NewFieldColumn::~NewFieldColumn()
@@ -903,12 +914,21 @@ double NewFieldColumn::calc_beat_for_y_offset(double y_offset)
 	return y_offset / (speed_multiplier * note_size);
 }
 
+void NewFieldColumn::calc_transform_for_beat(double beat, transform& trans)
+{
+	mod_val_inputs input(beat, 0.0, m_curr_beat, 0.0);
+	m_pos_mod.evaluate(input, trans.pos);
+	m_rot_mod.evaluate(input, trans.rot);
+	m_zoom_mod.evaluate(input, trans.zoom);
+}
+
 void NewFieldColumn::UpdateInternal(float delta)
 {
 	if(!m_use_game_music_beat)
 	{
 		m_curr_beat+= delta;
 	}
+	m_mod_manager.update(delta);
 	ActorFrame::UpdateInternal(delta);
 }
 
@@ -1138,9 +1158,14 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 			last_vert_set= true;
 		}
 
-		const RageVector3 left_vert(x - (note_size * .5), curr_y, 0);
-		const RageVector3 center_vert(x, curr_y, 0);
-		const RageVector3 right_vert(x + (note_size * .5), curr_y, 0);
+		transform trans;
+		calc_transform_for_beat(m_curr_beat + calc_beat_for_y_offset(curr_y), trans);
+
+		const RageVector3 left_vert(
+			x - (note_size * .5) + trans.pos.x, curr_y + trans.pos.y,
+			0 + trans.pos.z);
+		const RageVector3 center_vert(x + trans.pos.x, curr_y + trans.pos.y, 0 + trans.pos.z);
+		const RageVector3 right_vert(x + (note_size * .5) + trans.pos.x, curr_y + trans.pos.y, 0 + trans.pos.z);
 		const RageColor color(1.0, 1.0, 1.0, 1.0);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
@@ -1280,18 +1305,22 @@ void NewFieldColumn::DrawPrimitives()
 		NewSkinTapPart part= NSTP_Tap;
 		NewSkinTapOptionalPart head_part= NewSkinTapOptionalPart_Invalid;
 		NewSkinTapOptionalPart tail_part= NewSkinTapOptionalPart_Invalid;
-		double draw_beat= tap_beat;
+		double head_beat;
+		double tail_beat;
 		switch(tn.type)
 		{
 			case TapNoteType_Mine:
 				part= NSTP_Mine;
+				head_beat= tap_beat;
 				break;
 			case TapNoteType_Lift:
 				part= NSTP_Lift;
+				head_beat= tap_beat;
 				break;
 			case TapNoteType_HoldHead:
-				draw_beat= get_hold_draw_beat(tn, tap_beat);
 				part= NewSkinTapPart_Invalid;
+				head_beat= get_hold_draw_beat(tn, tap_beat);
+				tail_beat= m_curr_beat + NoteRowToBeat(tn.iDuration);
 				switch(tn.subType)
 				{
 					case TapNoteSubType_Hold:
@@ -1315,8 +1344,11 @@ void NewFieldColumn::DrawPrimitives()
 				}
 				break;
 			default:
+				part= NSTP_Tap;
+				head_beat= tap_beat;
 				break;
 		}
+		double draw_beat= head_beat;
 		vector<Actor*> acts;
 		if(part != NewSkinTapPart_Invalid)
 		{
@@ -1325,6 +1357,7 @@ void NewFieldColumn::DrawPrimitives()
 		else
 		{
 			// Put tails on the list first because they need to be under the heads.
+			draw_beat= tail_beat;
 			acts.push_back(m_newskin->get_optional_actor(tail_part, quantization, beat));
 			acts.push_back(m_newskin->get_optional_actor(head_part, quantization, beat));
 		}
@@ -1334,10 +1367,13 @@ void NewFieldColumn::DrawPrimitives()
 			// noteskin doesn't have them.
 			if(act != nullptr)
 			{
-				double y= calc_y_offset_for_beat(draw_beat - m_curr_beat);
-				act->SetY(y);
+				transform trans;
+				calc_transform_for_beat(draw_beat, trans);
+				trans.pos.y+= calc_y_offset_for_beat(draw_beat - m_curr_beat);
+				act->set_transform(trans);
 				act->Draw();
 			}
+			draw_beat= head_beat;
 		}
 	}
 	ActorFrame::DrawPrimitives();
@@ -1376,6 +1412,12 @@ bool NewField::EarlyAbortDraw() const
 
 void NewField::DrawPrimitives()
 {
+	vector<transform> column_trans(m_columns.size());
+	for(size_t c= 0; c < m_columns.size(); ++c)
+	{
+		m_columns[c].calc_transform_for_head(column_trans[c]);
+	}
+	m_newskin.transform_columns(column_trans);
 	draw_layer_set(m_newskin.m_layers_below_notes);
 	for(size_t c= 0; c < m_columns.size(); ++c)
 	{
@@ -1563,14 +1605,11 @@ void NewField::set_note_data(NoteData* note_data, TimingData const* timing, Styl
 	m_columns.clear();
 	m_columns.resize(m_note_data->GetNumTracks());
 	// Temporary until styles are removed.
-	vector<double> positions(m_note_data->GetNumTracks());
 	for(size_t i= 0; i < m_columns.size(); ++i)
 	{
-		positions[i]= colinfo[i].fXOffset;
 		m_columns[i].set_column_info(i, m_newskin.get_column(i), m_note_data,
 			m_timing_data, colinfo[i].fXOffset);
 	}
-	m_newskin.pass_positions_to_all_layers(positions);
 }
 
 void NewField::update_displayed_beat(double beat)
@@ -1634,23 +1673,38 @@ void NewField::set_note_upcoming(size_t column, double distance)
 // lua start
 struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
-	static int set_quantization_multiplier(T* p, lua_State* L)
+	static int get_quantization_multiplier(T* p, lua_State* L)
 	{
-		p->m_quantization_multiplier= FArg(1);
-		COMMON_RETURN_SELF;
+		p->m_quantization_multiplier.PushSelf(L);
+		return 1;
 	}
-	DEFINE_METHOD(get_quantization_multiplier, m_quantization_multiplier);
-	static int set_quantization_offset(T* p, lua_State* L)
+	static int get_quantization_offset(T* p, lua_State* L)
 	{
-		p->m_quantization_offset= FArg(1);
-		COMMON_RETURN_SELF;
+		p->m_quantization_offset.PushSelf(L);
+		return 1;
 	}
-	DEFINE_METHOD(get_quantization_offset, m_quantization_offset);
+#define GET_MOD(dim, part) \
+	static int get_##dim##_##part##_mod(T* p, lua_State* L) \
+	{ \
+		p->m_##part##_mod.dim##_mod.PushSelf(L); \
+		return 1; \
+	}
+#define GET_MOD_SET(part) GET_MOD(x, part); GET_MOD(y, part); GET_MOD(z, part);
+	GET_MOD_SET(pos);
+	GET_MOD_SET(rot);
+	GET_MOD_SET(zoom);
+#undef GET_MOD_SET
+#undef GET_MOD
+#define ADD_MOD_SET(part) ADD_METHOD(get_x_##part##_mod); ADD_METHOD(get_y_##part##_mod); ADD_METHOD(get_z_##part##_mod);
 	LunaNewFieldColumn()
 	{
-		ADD_GET_SET_METHODS(quantization_multiplier);
-		ADD_GET_SET_METHODS(quantization_offset);
+		ADD_METHOD(get_quantization_multiplier);
+		ADD_METHOD(get_quantization_offset);
+		ADD_MOD_SET(pos);
+		ADD_MOD_SET(rot);
+		ADD_MOD_SET(zoom);
 	}
+#undef ADD_MOD_SET
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
 

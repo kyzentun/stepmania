@@ -102,6 +102,13 @@ enum EffectAction
 LuaDeclareType( EffectAction );
 */
 
+struct transform // robot in disguise
+{
+	RageVector3 pos;
+	RageVector3 rot;
+	RageVector3 zoom;
+};
+
 /** @brief Base class for all objects that appear on the screen. */
 class Actor : public MessageSubscriber
 {
@@ -331,6 +338,13 @@ public:
 	float GetDestX() const				{ return DestTweenState().pos.x; };
 	float GetDestY() const				{ return DestTweenState().pos.y; };
 	float GetDestZ() const				{ return DestTweenState().pos.z; };
+	void set_transform(transform const& trans)
+	{
+		TweenState& dest= DestTweenState();
+		dest.pos= trans.pos;
+		dest.rotation= trans.rot;
+		dest.scale= trans.zoom;
+	}
 	void  SetX( float x )				{ DestTweenState().pos.x = x; };
 	void  SetY( float y )				{ DestTweenState().pos.y = y; };
 	void  SetZ( float z )				{ DestTweenState().pos.z = z; };

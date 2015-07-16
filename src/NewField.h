@@ -7,6 +7,7 @@
 
 #include "ActorFrame.h"
 #include "AutoActor.h"
+#include "FieldModifier.h"
 #include "NoteData.h"
 #include "RageTexture.h"
 
@@ -143,16 +144,22 @@ private:
 
 struct QuantizedTap
 {
-	QuantizedStateMap m_state_map;
-	AutoActor m_actor;
-	bool m_vivid;
-	Actor* get_quantized(double quantization, double beat)
+	Actor* get_quantized(double quantization, double beat, double rotation)
 	{
 		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
 		m_actor->SetState(state);
-		return m_actor;
+		m_actor->SetBaseRotationZ(rotation);
+		// Return the frame and not the actor because the notefield is going to
+		// apply mod transforms to it.  Returning the actor would make the mod
+		// transform stomp on the rotation the noteskin supplies.
+		return &m_frame;
 	}
 	bool load_from_lua(lua_State* L, int index, std::string& insanity_diagnosis);
+	bool m_vivid;
+private:
+	QuantizedStateMap m_state_map;
+	AutoActor m_actor;
+	ActorFrame m_frame;
 };
 
 enum TexCoordFlipMode
@@ -269,6 +276,7 @@ struct NewSkinLayer : ActorFrame
 
 	bool load_from_lua(lua_State* L, int index, size_t columns, std::string& insanity_diagnosis);
 	void position_columns_to_info(std::vector<double>& positions);
+	void transform_columns(std::vector<transform>& positions);
 	void pass_message_to_column(size_t column, Message const& msg)
 	{
 		if(column < m_actors.size())
@@ -277,6 +285,10 @@ struct NewSkinLayer : ActorFrame
 		}
 	}
 
+private:
+	// The actors have to be wrapped inside of frames so that mod transforms
+	// can be applied without stomping the rotation the noteskin supplies.
+	std::vector<ActorFrame> m_frames;
 	std::vector<AutoActor> m_actors;
 };
 
@@ -330,6 +342,17 @@ struct NewSkinData
 	{
 		pass_message_to_layers(m_layers_below_notes, column, msg);
 		pass_message_to_layers(m_layers_above_notes, column, msg);
+	}
+	void transform_columns(std::vector<transform>& positions)
+	{
+		for(auto&& lay : m_layers_below_notes)
+		{
+			lay.transform_columns(positions);
+		}
+		for(auto&& lay : m_layers_above_notes)
+		{
+			lay.transform_columns(positions);
+		}
 	}
 
 	std::vector<NewSkinLayer> m_layers_below_notes;
@@ -388,7 +411,24 @@ struct NewFieldColumn : ActorFrame
 	double calc_beat_for_y_offset(double y_offset);
 	double quantization_for_beat(double beat)
 	{
-		return fmodf((beat * m_quantization_multiplier) + m_quantization_offset, 1.0);
+		mod_val_inputs input(beat, 0.0, m_curr_beat, 0.0);
+		double mult= m_quantization_multiplier.evaluate(input);
+		double offset= m_quantization_offset.evaluate(input);
+		return fmodf((beat * mult) + offset, 1.0);
+	}
+	void calc_transform_for_beat(double beat, transform& trans);
+	void calc_transform_for_head(transform& trans)
+	{
+		calc_transform_for_beat(m_curr_beat, trans);
+		trans.pos.x+= GetX();
+		trans.pos.y+= GetY();
+		trans.pos.z+= GetZ();
+		trans.rot.x+= GetRotationX();
+		trans.rot.y+= GetRotationY();
+		trans.rot.z+= GetRotationZ();
+		trans.zoom.x*= GetZoomX() * GetBaseZoomX();
+		trans.zoom.y*= GetZoomY() * GetBaseZoomY();
+		trans.zoom.z*= GetZoomZ() * GetBaseZoomZ();
 	}
 
 	virtual void UpdateInternal(float delta);
@@ -413,8 +453,13 @@ struct NewFieldColumn : ActorFrame
 	};
 	column_status m_status;
 
-	double m_quantization_multiplier;
-	double m_quantization_offset;
+	ModManager m_mod_manager;
+	ModifiableValue m_quantization_multiplier;
+	ModifiableValue m_quantization_offset;
+
+	ModifiableVector3 m_pos_mod;
+	ModifiableVector3 m_rot_mod;
+	ModifiableVector3 m_zoom_mod;
 
 private:
 	float m_curr_beat;

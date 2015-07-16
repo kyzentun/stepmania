@@ -14,10 +14,12 @@ return function(button_list)
 	local rots= {Left= 90, Down= 0, Up= 180, Right= 270}
 	for i, button in ipairs(button_list) do
 		ret[i]= Def.ActorFrame{
+			InitCommand= function(self)
+				self:rotationz(rots[button] or 0)
+			end,
 			Def.Sprite{
 				Texture= "explosion.png", InitCommand= function(self)
-					self:rotationz(rots[button] or 0):diffusealpha(0)
-						:SetAllStateDelays(.05)
+					self:diffusealpha(0):SetAllStateDelays(.05)
 				end,
 				-- The ColumnJudgment command is the way to make the actor respond to
 				-- a judgment that occurs in the column.  The param argument is a table
@@ -56,8 +58,7 @@ return function(button_list)
 			},
 			Def.Sprite{
 				Texture= "explosion.png", InitCommand= function(self)
-					self:rotationz(rots[button] or 0):diffusealpha(0)
-						:SetAllStateDelays(.05)
+					self:diffusealpha(0):SetAllStateDelays(.05)
 				end,
 				-- The Hold command is the way to respond to a hold being active.
 				-- When there is a hold in the column, the Hold command will be sent.

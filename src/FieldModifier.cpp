@@ -1,6 +1,7 @@
 #include "global.h"
 #include "EnumHelper.h"
 #include "FieldModifier.h"
+#include "RageLog.h"
 #include "RageMath.h"
 #include "LuaBinding.h"
 
@@ -34,6 +35,11 @@ LuaXType(ModInputType);
 static const char* FieldModifierTypeNames[] = {
 	"Constant",
 	"Sine",
+	"Square",
+	"Triangle",
+	"SawSine",
+	"SawSquare",
+	"SawTriangle",
 };
 XToString(FieldModifierType);
 LuaXType(FieldModifierType);
@@ -101,13 +107,16 @@ struct mod_input_picker
 	}
 };
 
+#define FIELD_MOD_CONSTRUCTOR(name) \
+FieldModifier ## name(ModManager* man, std::vector<mod_input_info>& params) \
+{ \
+	set_manager(man); \
+	set_from_params(params); \
+}
+
 struct FieldModifierConstant : FieldModifier
 {
-	FieldModifierConstant(ModManager* man, std::vector<mod_input_info>& params)
-	{
-		set_manager(man);
-		set_from_params(params);
-	}
+	FIELD_MOD_CONSTRUCTOR(Constant);
 	mod_input_picker value;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
@@ -132,25 +141,17 @@ struct FieldModifierConstant : FieldModifier
 	virtual size_t num_inputs() { return 1; }
 };
 
-struct FieldModifierSine : FieldModifier
+struct FieldModifierWave : FieldModifier
 {
-	FieldModifierSine(ModManager* man, std::vector<mod_input_info>& params)
-	{
-		set_manager(man);
-		set_from_params(params);
-	}
-	mod_input_picker frequency;
+	FieldModifierWave() {}
+	FIELD_MOD_CONSTRUCTOR(Wave);
+	mod_input_picker angle;
 	mod_input_picker phase;
 	mod_input_picker amplitude;
 	mod_input_picker offset;
-	virtual double evaluate(mod_val_inputs const& input)
-	{
-		return (RageFastSin(frequency.pick(input) + phase.pick(input)) *
-			amplitude.pick(input)) + offset.pick(input);
-	}
 	virtual void set_manager(ModManager* man)
 	{
-		frequency.set_manager(man);
+		angle.set_manager(man);
 		phase.set_manager(man);
 		amplitude.set_manager(man);
 		offset.set_manager(man);
@@ -161,7 +162,7 @@ struct FieldModifierSine : FieldModifier
 		{
 			switch(i)
 			{
-				case 0: frequency.set_from_info(params[i]); break;
+				case 0: angle.set_from_info(params[i]); break;
 				case 1: phase.set_from_info(params[i]); break;
 				case 2: amplitude.set_from_info(params[i]); break;
 				case 3: offset.set_from_info(params[i]); break;
@@ -171,7 +172,7 @@ struct FieldModifierSine : FieldModifier
 	}
 	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		frequency.scalar.PushSelf(L);
+		angle.scalar.PushSelf(L);
 		lua_rawseti(L, table_index, 1);
 		phase.scalar.PushSelf(L);
 		lua_rawseti(L, table_index, 2);
@@ -183,6 +184,146 @@ struct FieldModifierSine : FieldModifier
 	virtual size_t num_inputs() { return 4; }
 };
 
+#define ZERO_AMP_RETURN_EARLY \
+double amp= amplitude.pick(input); \
+if(amp == 0.0) \
+{ \
+	return offset.pick(input); \
+}
+
+struct FieldModifierSine : FieldModifierWave
+{
+	FieldModifierSine() {}
+	FIELD_MOD_CONSTRUCTOR(Sine);
+	virtual double eval_internal(double const angle)
+	{
+		return RageFastSin(angle);
+	}
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		ZERO_AMP_RETURN_EARLY;
+		return (eval_internal(angle.pick(input) + phase.pick(input)) * amp)
+			+ offset.pick(input);
+	}
+};
+
+#define WAVE_INPUT \
+double wave_input= angle.pick(input) + phase.pick(input); \
+double wave_result= fmod(wave_input, M_PI * 2.0); \
+if(wave_result < 0.0) \
+{ \
+	wave_result+= M_PI * 2.0; \
+}
+
+struct FieldModifierSquare : FieldModifierWave
+{
+	FieldModifierSquare() {}
+	FIELD_MOD_CONSTRUCTOR(Square);
+	virtual double eval_internal(double const angle)
+	{
+		return angle >= M_PI ? -1.0 : 1.0;
+	}
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		ZERO_AMP_RETURN_EARLY;
+		WAVE_INPUT;
+		return eval_internal(wave_result) * amp + offset.pick(input);
+	}
+};
+
+struct FieldModifierTriangle : FieldModifierWave
+{
+	FieldModifierTriangle() {}
+	FIELD_MOD_CONSTRUCTOR(Triangle);
+	virtual double eval_internal(double const angle)
+	{
+		double ret= angle * M_1_PI;
+		if(ret < .5)
+		{
+			return ret * 2.0;
+		}
+		else if(ret < 1.5)
+		{
+			return 1.0 - ((ret - .5) * 2.0);
+		}
+		return -4.0 + (ret * 2.0);
+	}
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		ZERO_AMP_RETURN_EARLY;
+		WAVE_INPUT;
+		return (eval_internal(wave_result) * amp) + offset.pick(input);
+	}
+};
+
+double clip_wave_input_with_saw(double const angle, double const saw_begin,
+	double const saw_end)
+{
+	double const dist= saw_end - saw_begin;
+	double const mod_res= fmod(angle, dist);
+	if(mod_res < 0.0)
+	{
+		return mod_res + dist + saw_begin;
+	}
+	return mod_res + saw_begin;
+}
+
+template<typename wave>
+	struct FieldModifierSaw : wave
+{
+	FIELD_MOD_CONSTRUCTOR(Saw);
+	mod_input_picker saw_begin;
+	mod_input_picker saw_end;
+	virtual void set_manager(ModManager* man)
+	{
+		wave::set_manager(man);
+		saw_begin.set_manager(man);
+		saw_end.set_manager(man);
+	}
+	virtual void set_from_params(std::vector<mod_input_info>& params)
+	{
+		for(size_t i= 0; i < params.size(); ++i)
+		{
+			switch(i)
+			{
+				case 0: wave::angle.set_from_info(params[i]); break;
+				case 1: wave::phase.set_from_info(params[i]); break;
+				case 2: wave::amplitude.set_from_info(params[i]); break;
+				case 3: wave::offset.set_from_info(params[i]); break;
+				case 4: saw_begin.set_from_info(params[i]); break;
+				case 5: saw_end.set_from_info(params[i]); break;
+				default: break;
+			}
+		}
+	}
+	virtual void push_inputs(lua_State* L, int table_index)
+	{
+		wave::push_inputs(L, table_index);
+		saw_begin.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 5);
+		saw_end.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 6);
+	}
+	virtual size_t num_inputs() { return 6; }
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		double amp= wave::amplitude.pick(input);
+		if(amp == 0.0)
+		{
+			return wave::offset.pick(input);
+		}
+		double wave_input= wave::angle.pick(input) + wave::phase.pick(input);
+		double wave_result= fmod(wave_input, M_PI * 2.0);
+		if(wave_result < 0.0)
+		{
+			wave_result+= M_PI * 2.0;
+		}
+		wave_result= clip_wave_input_with_saw(wave_result,
+			saw_begin.pick(input), saw_end.pick(input));
+		return (wave::eval_internal(wave_result) * amp) + wave::offset.pick(input);;
+	}
+};
+
 static FieldModifier* create_field_mod(ModManager* man, FieldModifierType type, vector<mod_input_info>& params)
 {
 	switch(type)
@@ -191,6 +332,16 @@ static FieldModifier* create_field_mod(ModManager* man, FieldModifierType type, 
 			return new FieldModifierConstant(man, params);
 		case FMT_Sine:
 			return new FieldModifierSine(man, params);
+		case FMT_Square:
+			return new FieldModifierSquare(man, params);
+		case FMT_Triangle:
+			return new FieldModifierTriangle(man, params);
+		case FMT_SawSine:
+			return new FieldModifierSaw<FieldModifierSine>(man, params);
+		case FMT_SawSquare:
+			return new FieldModifierSaw<FieldModifierSquare>(man, params);
+		case FMT_SawTriangle:
+			return new FieldModifierSaw<FieldModifierTriangle>(man, params);
 		default:
 			return nullptr;
 	}

@@ -555,14 +555,6 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 	return true;
 }
 
-void NewSkinLayer::position_columns_to_info(vector<double>& positions)
-{
-	for(size_t c= 0; c < m_frames.size() && c < positions.size(); ++c)
-	{
-		m_frames[c].SetX(positions[c]);
-	}
-}
-
 void NewSkinLayer::transform_columns(vector<transform>& positions)
 {
 	for(size_t c= 0; c < m_frames.size() && c < positions.size(); ++c)

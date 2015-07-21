@@ -175,6 +175,11 @@ enum FieldModifierType
 {
 	FMT_Constant,
 	FMT_Sine,
+	FMT_Square,
+	FMT_Triangle,
+	FMT_SawSine,
+	FMT_SawSquare,
+	FMT_SawTriangle,
 	NUM_FieldModifierType,
 	FieldModifierType_Invalid
 };

@@ -307,18 +307,6 @@ struct NewSkinData
 	bool load_layer_from_lua(lua_State* L, int index, bool under_notes, size_t columns, std::string& insanity_diagnosis);
 	bool load_taps_from_lua(lua_State* L, int index, size_t columns, std::string const& load_dir, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
-	void pass_positions_to_layers(std::vector<NewSkinLayer>& layers, std::vector<double>& positions)
-	{
-		for(auto&& lay : layers)
-		{
-			lay.position_columns_to_info(positions);
-		}
-	}
-	void pass_positions_to_all_layers(std::vector<double>& positions)
-	{
-		pass_positions_to_layers(m_layers_below_notes, positions);
-		pass_positions_to_layers(m_layers_above_notes, positions);
-	}
 	void update_layers(std::vector<NewSkinLayer>& layers, float delta)
 	{
 		for(auto&& lay : layers)

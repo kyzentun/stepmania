@@ -418,6 +418,10 @@ struct NewFieldColumn : ActorFrame
 		trans.zoom.y*= GetZoomY() * GetBaseZoomY();
 		trans.zoom.z*= GetZoomZ() * GetBaseZoomZ();
 	}
+	void build_render_lists();
+	void draw_holds();
+	void draw_taps();
+	void draw_children();
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
@@ -457,6 +461,22 @@ private:
 	NewSkinColumn* m_newskin;
 	const NoteData* m_note_data;
 	const TimingData* m_timing_data;
+	// Data that needs to be stored for rendering below here.
+	// Holds and taps are put into different lists because they have to be
+	// rendered in different phases.  All hold bodies must be drawn first, then
+	// all taps, so the taps appear on top of the hold bodies and are not
+	// obscured.
+	void draw_holds_internal();
+	void draw_taps_internal();
+	enum render_step
+	{
+		RENDER_HOLDS,
+		RENDER_TAPS,
+		RENDER_CHILDREN
+	};
+	std::vector<NoteData::TrackMap::const_iterator> render_holds;
+	std::vector<NoteData::TrackMap::const_iterator> render_taps;
+	render_step curr_render_step;
 };
 
 struct NewField : ActorFrame

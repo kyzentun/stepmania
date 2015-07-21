@@ -28,6 +28,7 @@ public:
 	Actor* GetChild( const RString &sName );
 	std::vector<Actor*> GetChildren() { return m_SubActors; }
 	int GetNumChildren() const { return m_SubActors.size(); }
+	bool GetChildrenEmpty() const { return m_SubActors.empty(); }
 
 	/** @brief Remove all of the children from the frame. */
 	void RemoveAllChildren();

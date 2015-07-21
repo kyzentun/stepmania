@@ -1216,25 +1216,22 @@ double NewFieldColumn::get_hold_draw_beat(TapNote const& tap, double const hold_
 	return hold_beat;
 }
 
-void NewFieldColumn::DrawPrimitives()
+void NewFieldColumn::build_render_lists()
 {
+	render_holds.clear();
+	render_taps.clear();
 	m_status.dist_to_upcoming_arrow= 1000.0;
 	m_status.prev_active_hold= m_status.active_hold;
 	m_status.active_hold= nullptr;
-	// Holds and taps are put into different lists because they have to be
-	// rendered in different phases.  All hold bodies must be drawn first, then
-	// all taps, so the taps appear on top of the hold bodies and are not
-	// obscured.
-	vector<NoteData::TrackMap::const_iterator> holds;
-	vector<NoteData::TrackMap::const_iterator> taps;
-	NoteData::TrackMap::const_iterator begin, end;
 	double first_beat= m_curr_beat - calc_beat_for_y_offset(m_pixels_visible_before_beat);
 	double last_beat= m_curr_beat + calc_beat_for_y_offset(m_pixels_visible_after_beat);
 	double dist_factor= 1.0 / (last_beat - m_curr_beat);
+	NoteData::TrackMap::const_iterator begin, end;
 	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
 		BeatToNoteRow(last_beat), begin, end);
 	for(; begin != end; ++begin)
 	{
+		int tap_row= begin->first;
 		const TapNote& tn= begin->second;
 		switch(tn.type)
 		{
@@ -1248,7 +1245,9 @@ void NewFieldColumn::DrawPrimitives()
 			case TapNoteType_Fake:
 				if(!tn.result.bHidden)
 				{
-					taps.push_back(begin);
+					render_taps.push_back(begin);
+					update_upcoming(tap_row, dist_factor);
+					update_active_hold(tn);
 				}
 				break;
 			case TapNoteType_HoldHead:
@@ -1256,16 +1255,52 @@ void NewFieldColumn::DrawPrimitives()
 				{
 					// Hold heads are added to the tap list to take care of rendering
 					// heads and tails in the same phase as taps.
-					taps.push_back(begin);
-					holds.push_back(begin);
+					render_taps.push_back(begin);
+					render_holds.push_back(begin);
+					update_upcoming(tap_row, dist_factor);
+					update_active_hold(tn);
 				}
 				break;
 			default:
 				break;
 		}
 	}
+}
+
+void NewFieldColumn::draw_holds()
+{
+	if(render_holds.empty())
+	{
+		return;
+	}
+	curr_render_step= RENDER_HOLDS;
+	Draw();
+}
+
+void NewFieldColumn::draw_taps()
+{
+	if(render_taps.empty())
+	{
+		return;
+	}
+	curr_render_step= RENDER_TAPS;
+	Draw();
+}
+
+void NewFieldColumn::draw_children()
+{
+	if(GetChildrenEmpty())
+	{
+		return;
+	}
+	curr_render_step= RENDER_CHILDREN;
+	Draw();
+}
+
+void NewFieldColumn::draw_holds_internal()
+{
 	double const beat= m_curr_beat - floor(m_curr_beat);
-	for(auto&& holdit : holds)
+	for(auto&& holdit : render_holds)
 	{
 		// The hold loop does not need to call update_upcoming or
 		// update_active_hold beccause the tap loop handles them when drawing
@@ -1286,12 +1321,15 @@ void NewFieldColumn::DrawPrimitives()
 				* speed_multiplier);
 		}
 	}
-	for(auto&& tapit : taps)
+}
+
+void NewFieldColumn::draw_taps_internal()
+{
+	double const beat= m_curr_beat - floor(m_curr_beat);
+	for(auto&& tapit : render_taps)
 	{
 		int tap_row= tapit->first;
 		TapNote const& tn= tapit->second;
-		update_upcoming(tap_row, dist_factor);
-		update_active_hold(tn);
 		double const tap_beat= NoteRowToBeat(tap_row);
 		double const quantization= quantization_for_beat(tap_beat);
 		NewSkinTapPart part= NSTP_Tap;
@@ -1368,7 +1406,24 @@ void NewFieldColumn::DrawPrimitives()
 			draw_beat= head_beat;
 		}
 	}
-	ActorFrame::DrawPrimitives();
+}
+
+void NewFieldColumn::DrawPrimitives()
+{
+	switch(curr_render_step)
+	{
+		case RENDER_HOLDS:
+			draw_holds_internal();
+			break;
+		case RENDER_TAPS:
+			draw_taps_internal();
+			break;
+		case RENDER_CHILDREN:
+			ActorFrame::DrawPrimitives();
+			break;
+		default:
+			break;
+	}
 }
 
 REGISTER_ACTOR_CLASS(NewField);
@@ -1408,12 +1463,7 @@ void NewField::DrawPrimitives()
 	for(size_t c= 0; c < m_columns.size(); ++c)
 	{
 		m_columns[c].calc_transform_for_head(column_trans[c]);
-	}
-	m_newskin.transform_columns(column_trans);
-	draw_layer_set(m_newskin.m_layers_below_notes);
-	for(size_t c= 0; c < m_columns.size(); ++c)
-	{
-		m_columns[c].Draw();
+		m_columns[c].build_render_lists();
 		set_note_upcoming(c, m_columns[c].m_status.dist_to_upcoming_arrow);
 		// The hold status should be updated if there is a currently active hold
 		// or if there was one last frame.
@@ -1425,6 +1475,23 @@ void NewField::DrawPrimitives()
 			TapNote const* pass= curr_is_null ? m_columns[c].m_status.prev_active_hold : m_columns[c].m_status.active_hold;
 			set_hold_status(c, pass, prev_is_null, curr_is_null);
 		}
+	}
+	m_newskin.transform_columns(column_trans);
+	draw_layer_set(m_newskin.m_layers_below_notes);
+	// Hold bodies in all columns must be underneath taps.  This way, a hold in
+	// the second column can't obscure a tap in the first if it crosses the
+	// first column.  Same goes for children the theme decides to add.
+	for(size_t c= 0; c < m_columns.size(); ++c)
+	{
+		m_columns[c].draw_holds();
+	}
+	for(size_t c= 0; c < m_columns.size(); ++c)
+	{
+		m_columns[c].draw_taps();
+	}
+	for(size_t c= 0; c < m_columns.size(); ++c)
+	{
+		m_columns[c].draw_children();
 	}
 	draw_layer_set(m_newskin.m_layers_above_notes);
 	ActorFrame::DrawPrimitives();

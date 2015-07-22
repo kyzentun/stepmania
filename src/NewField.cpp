@@ -1141,9 +1141,21 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 	DISPLAY->ClearAllTextures();
 	bool last_vert_set= false;
 	vector<double> tex_coords;
-	for(double curr_y= tex_handler.start_y; !last_vert_set; curr_y+= y_step)
+	// Set a start and end y so that the hold can be clipped to the start and
+	// end of the field.
+	double start_y= max(tex_handler.start_y, -m_pixels_visible_before_beat);
+	double end_y= std::min(tex_handler.end_y, m_pixels_visible_after_beat);
+	for(double curr_y= start_y; !last_vert_set; curr_y+= y_step)
 	{
 		tex_coords.clear();
+		if(curr_y >= end_y)
+		{
+			// Different from the end check in hold_texture_handler because this
+			// clips the hold off at the end of the notefield.  That clips the hold
+			// at the end of the hold.
+			curr_y= end_y;
+			last_vert_set= true;
+		}
 		int phase= tex_handler.calc_tex_y(curr_y, tex_coords);
 		if(phase == HTP_Done)
 		{
@@ -1323,6 +1335,16 @@ void NewFieldColumn::draw_holds_internal()
 	}
 }
 
+struct tap_draw_info
+{
+	double draw_beat;
+	double y_offset;
+	Actor* act;
+	tap_draw_info()
+		:draw_beat(0.0), y_offset(0.0), act(nullptr)
+	{}
+};
+
 void NewFieldColumn::draw_taps_internal()
 {
 	double const beat= m_curr_beat - floor(m_curr_beat);
@@ -1378,32 +1400,44 @@ void NewFieldColumn::draw_taps_internal()
 				head_beat= tap_beat;
 				break;
 		}
-		double draw_beat= head_beat;
-		vector<Actor*> acts;
+		vector<tap_draw_info> acts(2);
 		if(part != NewSkinTapPart_Invalid)
 		{
-			acts.push_back(m_newskin->get_tap_actor(part, quantization, beat));
+			acts[0].draw_beat= head_beat;
+			acts[0].y_offset= calc_y_offset_for_beat(head_beat - m_curr_beat);
+			if(y_offset_visible(acts[0].y_offset))
+			{
+				acts[0].act= m_newskin->get_tap_actor(part, quantization, beat);
+			}
 		}
 		else
 		{
 			// Put tails on the list first because they need to be under the heads.
-			draw_beat= tail_beat;
-			acts.push_back(m_newskin->get_optional_actor(tail_part, quantization, beat));
-			acts.push_back(m_newskin->get_optional_actor(head_part, quantization, beat));
+			acts[0].draw_beat= tail_beat;
+			acts[0].y_offset= calc_y_offset_for_beat(tail_beat - m_curr_beat);
+			if(y_offset_visible(acts[0].y_offset))
+			{
+				acts[0].act= m_newskin->get_optional_actor(tail_part, quantization, beat);
+			}
+			acts[1].draw_beat= head_beat;
+			acts[1].y_offset= calc_y_offset_for_beat(head_beat - m_curr_beat);
+			if(y_offset_visible(acts[1].y_offset))
+			{
+				acts[1].act= m_newskin->get_optional_actor(head_part, quantization, beat);
+			}
 		}
 		for(auto&& act : acts)
 		{
 			// Tails are optional, get_optional_actor returns nullptr if the
 			// noteskin doesn't have them.
-			if(act != nullptr)
+			if(act.act != nullptr)
 			{
 				transform trans;
-				calc_transform_for_beat(draw_beat, trans);
-				trans.pos.y+= calc_y_offset_for_beat(draw_beat - m_curr_beat);
-				act->set_transform(trans);
-				act->Draw();
+				calc_transform_for_beat(act.draw_beat, trans);
+				trans.pos.y+= act.y_offset;
+				act.act->set_transform(trans);
+				act.act->Draw();
 			}
-			draw_beat= head_beat;
 		}
 	}
 }

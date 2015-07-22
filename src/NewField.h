@@ -391,6 +391,10 @@ struct NewFieldColumn : ActorFrame
 	double get_hold_draw_beat(TapNote const& tap, double const hold_beat);
 	void draw_hold(QuantizedHoldRenderData& data, double x, double y, double len);
 	void update_displayed_beat(double beat);
+	bool y_offset_visible(double off)
+	{
+		return off >= -m_pixels_visible_before_beat && off <= m_pixels_visible_after_beat;
+	}
 	double calc_y_offset_for_beat(double beat);
 	double calc_y_offset_for_curr_beat()
 	{
@@ -454,9 +458,9 @@ struct NewFieldColumn : ActorFrame
 	ModifiableVector3 m_zoom_mod;
 
 private:
-	float m_curr_beat;
-	float m_pixels_visible_before_beat;
-	float m_pixels_visible_after_beat;
+	double m_curr_beat;
+	double m_pixels_visible_before_beat;
+	double m_pixels_visible_after_beat;
 	size_t m_column;
 	NewSkinColumn* m_newskin;
 	const NoteData* m_note_data;

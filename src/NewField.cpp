@@ -10,6 +10,7 @@
 #include "RageDisplay.h"
 #include "RageFileManager.h"
 #include "RageLog.h"
+#include "RageMath.h"
 #include "RageTextureManager.h"
 #include "RageUtil.h"
 #include "ScreenDimensions.h"
@@ -1114,6 +1115,9 @@ static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 
 void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y, double len)
 {
+	// pos_z_vec will be used later to orient the hold.  Read below. -Kyz
+	static const RageVector3 pos_z_vec(0.0f, 0.0f, 1.0f);
+	static const RageVector3 pos_y_vec(0.0f, 1.0f, 0.0f);
 	static strip_buffer verts_to_draw;
 	verts_to_draw.init();
 	static const double y_step= 4.0;
@@ -1165,11 +1169,24 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 		transform trans;
 		calc_transform_for_beat(m_curr_beat + calc_beat_for_y_offset(curr_y), trans);
 
+		// TODO: get render_forward from a spline.
+		const RageVector3 render_forward(0.0f, 1.0f, 0.0f);
+		RageVector3 render_left;
+		if(std::abs(render_forward.z) > 0.9f) // 0.9 arbitrariliy picked.
+		{
+			RageVec3Cross(&render_left, &pos_y_vec, &render_forward);
+		}
+		else
+		{
+			RageVec3Cross(&render_left, &pos_z_vec, &render_forward);
+		}
+		RageAARotate(&render_left, &render_forward, -trans.rot.y);
+		render_left*= (.5 * note_size) * trans.zoom.x;
 		const RageVector3 left_vert(
-			x - (note_size * .5) + trans.pos.x, curr_y + trans.pos.y,
-			0 + trans.pos.z);
+			x + render_left.x + trans.pos.x, curr_y + render_left.y + trans.pos.y,
+			render_left.z + trans.pos.z);
 		const RageVector3 center_vert(x + trans.pos.x, curr_y + trans.pos.y, 0 + trans.pos.z);
-		const RageVector3 right_vert(x + (note_size * .5) + trans.pos.x, curr_y + trans.pos.y, 0 + trans.pos.z);
+		const RageVector3 right_vert(x + -render_left.x + trans.pos.x, curr_y -render_left.y + trans.pos.y, -render_left.z + trans.pos.z);
 		const RageColor color(1.0, 1.0, 1.0, 1.0);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
@@ -1434,6 +1451,9 @@ void NewFieldColumn::draw_taps_internal()
 			{
 				transform trans;
 				calc_transform_for_beat(act.draw_beat, trans);
+				trans.rot.x= RadianToDegree(trans.rot.x);
+				trans.rot.y= RadianToDegree(trans.rot.y);
+				trans.rot.z= RadianToDegree(trans.rot.z);
 				trans.pos.y+= act.y_offset;
 				act.act->set_transform(trans);
 				act.act->Draw();

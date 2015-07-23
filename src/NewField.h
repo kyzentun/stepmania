@@ -390,7 +390,7 @@ struct NewFieldColumn : ActorFrame
 
 	double get_hold_draw_beat(TapNote const& tap, double const hold_beat);
 	void draw_hold(QuantizedHoldRenderData& data, double x, double y, double len);
-	void update_displayed_beat(double beat);
+	void update_displayed_beat(double beat, double second);
 	bool y_offset_visible(double off)
 	{
 		return off >= -m_pixels_visible_before_beat && off <= m_pixels_visible_after_beat;
@@ -459,6 +459,7 @@ struct NewFieldColumn : ActorFrame
 
 private:
 	double m_curr_beat;
+	double m_curr_second;
 	double m_pixels_visible_before_beat;
 	double m_pixels_visible_after_beat;
 	size_t m_column;
@@ -489,6 +490,7 @@ struct NewField : ActorFrame
 	~NewField();
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
+	virtual void PreDraw();
 	virtual void DrawPrimitives();
 
 	void draw_layer_set(std::vector<NewSkinLayer>& layers);
@@ -502,7 +504,7 @@ struct NewField : ActorFrame
 	void set_steps(Steps* data);
 	void set_note_data(NoteData* note_data, TimingData const* timing, Style const* curr_style);
 
-	void update_displayed_beat(double beat);
+	void update_displayed_beat(double beat, double second);
 
 	void did_tap_note(size_t column, TapNoteScore tns, bool bright);
 	void did_hold_note(size_t column, HoldNoteScore hns, bool bright);
@@ -510,7 +512,15 @@ struct NewField : ActorFrame
 	void set_pressed(size_t column, bool on);
 	void set_note_upcoming(size_t column, double distance);
 
+	ModManager m_mod_manager;
+	ModifiableVector3 m_pos_mod;
+	ModifiableVector3 m_rot_mod;
+	ModifiableVector3 m_zoom_mod;
+
 private:
+	double m_curr_beat;
+	double m_curr_second;
+
 	bool m_own_note_data;
 	NoteData* m_note_data;
 	const TimingData* m_timing_data;

@@ -157,7 +157,7 @@ template<typename el_type, typename en_type>
 	{
 		return;
 	}
-	for(el_type curr= begin; curr != end; ++curr)
+	for(int curr= begin; curr != end; ++curr)
 	{
 		Enum::Push(L, static_cast<en_type>(curr));
 		lua_gettable(L, index);
@@ -868,7 +868,8 @@ NewFieldColumn::NewFieldColumn()
 	 m_quantization_offset(&m_mod_manager, 0.0),
 	 m_pos_mod(&m_mod_manager, 0.0), m_rot_mod(&m_mod_manager, 0.0),
 	 m_zoom_mod(&m_mod_manager, 1.0),
-	 m_curr_beat(0.0f), m_pixels_visible_before_beat(128.0f),
+	 m_curr_beat(0.0f), m_curr_second(0.0),
+	 m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
 {
@@ -889,11 +890,12 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_use_game_music_beat= true;
 }
 
-void NewFieldColumn::update_displayed_beat(double beat)
+void NewFieldColumn::update_displayed_beat(double beat, double second)
 {
 	if(m_use_game_music_beat)
 	{
 		m_curr_beat= beat;
+		m_curr_second= second;
 	}
 }
 
@@ -909,7 +911,8 @@ double NewFieldColumn::calc_beat_for_y_offset(double y_offset)
 
 void NewFieldColumn::calc_transform_for_beat(double beat, transform& trans)
 {
-	mod_val_inputs input(beat, 0.0, m_curr_beat, 0.0);
+	double second= m_timing_data->GetElapsedTimeFromBeat(beat);
+	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 	m_pos_mod.evaluate(input, trans.pos);
 	m_rot_mod.evaluate(input, trans.rot);
 	m_zoom_mod.evaluate(input, trans.zoom);
@@ -920,6 +923,7 @@ void NewFieldColumn::UpdateInternal(float delta)
 	if(!m_use_game_music_beat)
 	{
 		m_curr_beat+= delta;
+		m_curr_second= m_timing_data->GetElapsedTimeFromBeat(m_curr_beat);
 	}
 	m_mod_manager.update(delta);
 	ActorFrame::UpdateInternal(delta);
@@ -1483,7 +1487,9 @@ void NewFieldColumn::DrawPrimitives()
 REGISTER_ACTOR_CLASS(NewField);
 
 NewField::NewField()
-	:m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr)
+	:m_pos_mod(&m_mod_manager, 0.0), m_rot_mod(&m_mod_manager, 0.0),
+	 m_zoom_mod(&m_mod_manager, 1.0),
+	 m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr)
 {
 	m_skin_walker.load_from_file(SpecialFiles::NEWSKINS_DIR + "default/noteskin.lua");
 }
@@ -1498,6 +1504,7 @@ NewField::~NewField()
 
 void NewField::UpdateInternal(float delta)
 {
+	m_mod_manager.update(delta);
 	m_newskin.update_all_layers(delta);
 	for(auto&& col : m_columns)
 	{
@@ -1509,6 +1516,17 @@ void NewField::UpdateInternal(float delta)
 bool NewField::EarlyAbortDraw() const
 {
 	return m_note_data == nullptr || m_note_data->IsEmpty() || m_timing_data == nullptr || m_columns.empty() || !m_newskin.loaded_successfully() || ActorFrame::EarlyAbortDraw();
+}
+
+void NewField::PreDraw()
+{
+	mod_val_inputs input(m_curr_beat, m_curr_second, m_curr_beat, m_curr_second);
+	transform trans;
+	m_pos_mod.evaluate(input, trans.pos);
+	m_rot_mod.evaluate(input, trans.rot);
+	m_zoom_mod.evaluate(input, trans.zoom);
+	set_transform(trans);
+	ActorFrame::PreDraw();
 }
 
 void NewField::DrawPrimitives()
@@ -1725,11 +1743,13 @@ void NewField::set_note_data(NoteData* note_data, TimingData const* timing, Styl
 	}
 }
 
-void NewField::update_displayed_beat(double beat)
+void NewField::update_displayed_beat(double beat, double second)
 {
+	m_curr_beat= beat;
+	m_curr_second= second;
 	for(auto&& col : m_columns)
 	{
-		col.update_displayed_beat(beat);
+		col.update_displayed_beat(beat, second);
 	}
 }
 
@@ -1784,6 +1804,15 @@ void NewField::set_note_upcoming(size_t column, double distance)
 
 
 // lua start
+#define GET_MOD(dim, part) \
+	static int get_##dim##_##part##_mod(T* p, lua_State* L) \
+	{ \
+		p->m_##part##_mod.dim##_mod.PushSelf(L); \
+		return 1; \
+	}
+#define GET_MOD_SET(part) GET_MOD(x, part); GET_MOD(y, part); GET_MOD(z, part);
+#define ADD_MOD_SET(part) ADD_METHOD(get_x_##part##_mod); ADD_METHOD(get_y_##part##_mod); ADD_METHOD(get_z_##part##_mod);
+
 struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
 	static int get_quantization_multiplier(T* p, lua_State* L)
@@ -1796,19 +1825,9 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		p->m_quantization_offset.PushSelf(L);
 		return 1;
 	}
-#define GET_MOD(dim, part) \
-	static int get_##dim##_##part##_mod(T* p, lua_State* L) \
-	{ \
-		p->m_##part##_mod.dim##_mod.PushSelf(L); \
-		return 1; \
-	}
-#define GET_MOD_SET(part) GET_MOD(x, part); GET_MOD(y, part); GET_MOD(z, part);
 	GET_MOD_SET(pos);
 	GET_MOD_SET(rot);
 	GET_MOD_SET(zoom);
-#undef GET_MOD_SET
-#undef GET_MOD
-#define ADD_MOD_SET(part) ADD_METHOD(get_x_##part##_mod); ADD_METHOD(get_y_##part##_mod); ADD_METHOD(get_z_##part##_mod);
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
@@ -1817,7 +1836,6 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_MOD_SET(rot);
 		ADD_MOD_SET(zoom);
 	}
-#undef ADD_MOD_SET
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
 
@@ -1847,12 +1865,18 @@ struct LunaNewField : Luna<NewField>
 		p->push_columns_to_lua(L);
 		return 1;
 	}
+	GET_MOD_SET(pos);
+	GET_MOD_SET(rot);
+	GET_MOD_SET(zoom);
 	LunaNewField()
 	{
 		ADD_METHOD(set_speed);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_METHOD(set_steps);
 		ADD_METHOD(get_columns);
+		ADD_MOD_SET(pos);
+		ADD_MOD_SET(rot);
+		ADD_MOD_SET(zoom);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewField, ActorFrame);

@@ -1556,7 +1556,8 @@ void Player::DrawPrimitives()
 
 	if(m_new_field != nullptr)
 	{
-		m_new_field->update_displayed_beat(m_pPlayerState->GetDisplayedPosition().m_fSongBeatVisible);
+		SongPosition const& disp_pos= m_pPlayerState->GetDisplayedPosition();
+		m_new_field->update_displayed_beat(disp_pos.m_fSongBeatVisible, disp_pos.m_fMusicSecondsVisible);
 	}
 
 	// May have both players in doubles (for battle play); only draw primary player.
@@ -1668,15 +1669,11 @@ Player::PlayerNoteFieldPositioner::PlayerNoteFieldPositioner(
 	player->m_pNoteField->SetY(original_y + y_offset);
 	player->m_pNoteField->SetZoom(zoom);
 	player->m_pNoteField->SetRotationX(tilt_degrees);
-	player->m_new_field->SetY(original_y + y_offset);
-	player->m_new_field->SetZoom(zoom);
-	player->m_new_field->SetRotationX(tilt_degrees);
 }
 
 Player::PlayerNoteFieldPositioner::~PlayerNoteFieldPositioner()
 {
 	player->m_pNoteField->SetY(original_y);
-	player->m_new_field->SetY(original_y);
 	player->PopPlayerMatrix();
 }
 

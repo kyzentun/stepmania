@@ -195,6 +195,14 @@ typedef StdString::CStdString RString;
 /** @brief Define Pi to many digits. */
 #define M_PI 3.1415926535897932384626433832795
 #endif
+// Other tasty pies from gcc's math.h.
+#ifndef M_1_PI
+#define M_PI_2		1.57079632679489661923	/* pi/2 */
+#define M_PI_4		0.78539816339744830962	/* pi/4 */
+#define M_1_PI		0.31830988618379067154	/* 1/pi */
+#define M_2_PI		0.63661977236758134308	/* 2/pi */
+#define M_2_SQRTPI	1.12837916709551257390	/* 2/sqrt(pi) */
+#endif
 
 #ifdef NEED_POWF
 inline float powf( float x, float y ) CONST_FUNCTION;

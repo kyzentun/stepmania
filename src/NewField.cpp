@@ -387,14 +387,67 @@ Actor* NewSkinColumn::get_optional_actor(NewSkinTapOptionalPart type, double qua
 	return tap->get_quantized(quantization, beat, m_rotations[type_index]);
 }
 
-void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type, bool active, double quantization, double beat, QuantizedHoldRenderData& data)
+void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type,
+	bool active, bool reverse, double quantization, double beat,
+	QuantizedHoldRenderData& data)
 {
 	if(sub_type >= NUM_TapNoteSubType)
 	{
 		data.clear();
 		return;
 	}
-	m_holds[sub_type][active].get_quantized(quantization, beat, data);
+	if(!reverse)
+	{
+		m_holds[sub_type][active].get_quantized(quantization, beat, data);
+	}
+	else
+	{
+		m_reverse_holds[sub_type][active].get_quantized(quantization, beat, data);
+	}
+}
+
+bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
+	std::vector<std::vector<QuantizedHold> >& holder,
+	std::string const& holds_name,
+	std::string const& load_dir, std::string& insanity_diagnosis)
+{
+	string sub_sanity;
+	int original_top= lua_gettop(L);
+#define RETURN_NOT_SANE(message) lua_settop(L, original_top); insanity_diagnosis= message; return false;
+	lua_getfield(L, index, holds_name.c_str());
+	if(!lua_istable(L, -1))
+	{
+		RETURN_NOT_SANE("No " + holds_name + " given.");
+	}
+	int holds_index= lua_gettop(L);
+	holder.resize(NUM_TapNoteSubType);
+	for(size_t part= 0; part < NUM_TapNoteSubType; ++part)
+	{
+		Enum::Push(L, static_cast<TapNoteSubType>(part));
+		lua_gettable(L, holds_index);
+		if(!lua_istable(L, -1))
+		{
+			RETURN_NOT_SANE(ssprintf("Hold subtype %s not returned.", TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str()));
+		}
+		int actives_index= lua_gettop(L);
+		static const size_t num_active_states= 2;
+		holder[part].resize(num_active_states);
+		for(size_t a= 0; a < num_active_states; ++a)
+		{
+			lua_rawgeti(L, actives_index, a+1);
+			if(!lua_istable(L, -1))
+			{
+				RETURN_NOT_SANE(ssprintf("Hold info not given for active state %zu of subtype %s.", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str()));
+			}
+			if(!holder[part][a].load_from_lua(L, lua_gettop(L), load_dir, sub_sanity))
+			{
+				RETURN_NOT_SANE(ssprintf("Error loading active state %zu of subtype %s: %s", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str(), sub_sanity.c_str()));
+			}
+		}
+	}
+#undef RETURN_NOT_SANE
+	lua_settop(L, original_top);
+	return true;
 }
 
 bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_dir, string& insanity_diagnosis)
@@ -405,6 +458,7 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 	vector<QuantizedTap> temp_taps;
 	vector<QuantizedTap*> temp_optionals(NUM_NewSkinTapOptionalPart, nullptr);
 	vector<vector<QuantizedHold> > temp_holds;
+	vector<vector<QuantizedHold> > temp_reverse_holds;
 	vector<double> temp_rotations;
 	lua_getfield(L, index, "taps");
 	if(!lua_istable(L, -1))
@@ -454,38 +508,16 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 		}
 	}
 	lua_settop(L, optional_taps_index-1);
-	lua_getfield(L, index, "holds");
-	if(!lua_istable(L, -1))
+	if(!load_holds_from_lua(L, index, temp_holds, "holds", load_dir,
+			insanity_diagnosis))
 	{
-		RETURN_NOT_SANE("No holds given.");
+		RETURN_NOT_SANE(insanity_diagnosis);
 	}
-	int holds_index= lua_gettop(L);
-	temp_holds.resize(NUM_TapNoteSubType);
-	for(size_t part= 0; part < NUM_TapNoteSubType; ++part)
+	if(!load_holds_from_lua(L, index, temp_reverse_holds, "reverse_holds", load_dir,
+			insanity_diagnosis))
 	{
-		Enum::Push(L, static_cast<TapNoteSubType>(part));
-		lua_gettable(L, holds_index);
-		if(!lua_istable(L, -1))
-		{
-			RETURN_NOT_SANE(ssprintf("Hold subtype %s not returned.", TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str()));
-		}
-		int actives_index= lua_gettop(L);
-		static const size_t num_active_states= 2;
-		temp_holds[part].resize(num_active_states);
-		for(size_t a= 0; a < num_active_states; ++a)
-		{
-			lua_rawgeti(L, actives_index, a+1);
-			if(!lua_istable(L, -1))
-			{
-				RETURN_NOT_SANE(ssprintf("Hold info not given for active state %zu of subtype %s.", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str()));
-			}
-			if(!temp_holds[part][a].load_from_lua(L, lua_gettop(L), load_dir, sub_sanity))
-			{
-				RETURN_NOT_SANE(ssprintf("Error loading active state %zu of subtype %s: %s", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str(), sub_sanity.c_str()));
-			}
-		}
+		RETURN_NOT_SANE(insanity_diagnosis);
 	}
-	lua_settop(L, holds_index-1);
 	lua_getfield(L, index, "rotations");
 	load_enum_table(L, lua_gettop(L), NSTP_Tap, NUM_NewSkinTapPart,
 		temp_rotations, 0.0, 1000.0, 0.0);
@@ -495,6 +527,7 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 	clear_optionals();
 	m_optional_taps.swap(temp_optionals);
 	m_holds.swap(temp_holds);
+	m_reverse_holds.swap(temp_reverse_holds);
 	m_rotations.swap(temp_rotations);
 	return true;
 }
@@ -866,14 +899,18 @@ REGISTER_ACTOR_CLASS(NewFieldColumn);
 NewFieldColumn::NewFieldColumn()
 	:m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
-	 m_pos_mod(&m_mod_manager, 0.0), m_rot_mod(&m_mod_manager, 0.0),
-	 m_zoom_mod(&m_mod_manager, 1.0),
+	 m_reverse_offset_pixels(&m_mod_manager, 0.0),
+	 m_reverse_percent(&m_mod_manager, 0.0),
+	 m_center_percent(&m_mod_manager, 0.0),
+	 m_note_mod(&m_mod_manager), m_column_mod(&m_mod_manager),
 	 m_curr_beat(0.0f), m_curr_second(0.0),
 	 m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
 {
 	m_quantization_multiplier.get_value().set_value_instant(1.0);
+	double default_offset= SCREEN_CENTER_Y - note_size;
+	m_reverse_offset_pixels.get_value().set_value_instant(default_offset);
 }
 
 NewFieldColumn::~NewFieldColumn()
@@ -886,7 +923,7 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_newskin= newskin;
 	m_note_data= note_data;
 	m_timing_data= timing_data;
-	SetX(x);
+	m_column_mod.pos_mod.x_mod.get_value().set_value_instant(x);
 	m_use_game_music_beat= true;
 }
 
@@ -913,9 +950,32 @@ void NewFieldColumn::calc_transform_for_beat(double beat, transform& trans)
 {
 	double second= m_timing_data->GetElapsedTimeFromBeat(beat);
 	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
-	m_pos_mod.evaluate(input, trans.pos);
-	m_rot_mod.evaluate(input, trans.rot);
-	m_zoom_mod.evaluate(input, trans.zoom);
+	m_note_mod.evaluate(input, trans);
+}
+
+void NewFieldColumn::calc_reverse_shift()
+{
+	mod_val_inputs input(m_curr_beat, m_curr_second);
+	double reverse_offset= m_reverse_offset_pixels.evaluate(input);
+	double reverse_percent= m_reverse_percent.evaluate(input);
+	double center_percent= m_center_percent.evaluate(input);
+	reverse_shift= SCALE(reverse_percent, 0.0, 1.0, -reverse_offset, reverse_offset);
+	reverse_shift= SCALE(center_percent, 0.0, 1.0, reverse_shift, 0.0);
+	reverse_scale= SCALE(reverse_percent, 0.0, 1.0, 1.0, -1.0);
+	reverse_scale_sign= (reverse_scale < 0.0) ? -1.0 : 1.0;
+	static double const min_visible_scale= 0.1;
+	double visible_scale= fabs(reverse_scale);
+	if(visible_scale < min_visible_scale)
+	{
+		visible_scale= min_visible_scale;
+	}
+	first_y_offset_visible= -m_pixels_visible_before_beat / visible_scale;
+	last_y_offset_visible= m_pixels_visible_after_beat / visible_scale;
+}
+
+double NewFieldColumn::apply_reverse_shift(double y_offset)
+{
+	return (y_offset * reverse_scale) + reverse_shift;
 }
 
 void NewFieldColumn::UpdateInternal(float delta)
@@ -926,6 +986,7 @@ void NewFieldColumn::UpdateInternal(float delta)
 		m_curr_second= m_timing_data->GetElapsedTimeFromBeat(m_curr_beat);
 	}
 	m_mod_manager.update(delta);
+	calc_reverse_shift();
 	ActorFrame::UpdateInternal(delta);
 }
 
@@ -1145,14 +1206,16 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 			break;
 	}
 	hold_texture_handler tex_handler(note_size, y, len, tex_top, tex_bottom);
+	double const body_start_render_y= apply_reverse_shift(tex_handler.body_start_y);
+	double const body_end_render_y= apply_reverse_shift(tex_handler.body_end_y);
 	double const tex_center= (tex_left + tex_right) * .5;
 	DISPLAY->ClearAllTextures();
 	bool last_vert_set= false;
 	vector<double> tex_coords;
 	// Set a start and end y so that the hold can be clipped to the start and
 	// end of the field.
-	double start_y= max(tex_handler.start_y, -m_pixels_visible_before_beat);
-	double end_y= std::min(tex_handler.end_y, m_pixels_visible_after_beat);
+	double start_y= max(tex_handler.start_y, first_y_offset_visible);
+	double end_y= std::min(tex_handler.end_y, last_y_offset_visible);
 	for(double curr_y= start_y; !last_vert_set; curr_y+= y_step)
 	{
 		tex_coords.clear();
@@ -1186,11 +1249,29 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 		}
 		RageAARotate(&render_left, &render_forward, -trans.rot.y);
 		render_left*= (.5 * note_size) * trans.zoom.x;
+		// Hold caps need to not be squished by the reverse_scale.
+		double render_y= curr_y;
+		switch(phase)
+		{
+			case HTP_Top:
+				render_y= body_start_render_y -
+					((tex_handler.body_start_y - curr_y) * reverse_scale_sign);
+				break;
+			case HTP_Bottom:
+			case HTP_Done:
+				render_y= body_end_render_y +
+					((curr_y - tex_handler.body_end_y) * reverse_scale_sign);
+				break;
+			case HTP_Body:
+			default:
+				render_y= apply_reverse_shift(curr_y) + trans.pos.y;
+				break;
+		}
 		const RageVector3 left_vert(
-			x + render_left.x + trans.pos.x, curr_y + render_left.y + trans.pos.y,
+			x + render_left.x + trans.pos.x, render_y + render_left.y,
 			render_left.z + trans.pos.z);
-		const RageVector3 center_vert(x + trans.pos.x, curr_y + trans.pos.y, 0 + trans.pos.z);
-		const RageVector3 right_vert(x + -render_left.x + trans.pos.x, curr_y -render_left.y + trans.pos.y, -render_left.z + trans.pos.z);
+		const RageVector3 center_vert(x + trans.pos.x, render_y, 0 + trans.pos.z);
+		const RageVector3 right_vert(x + -render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
 		const RageColor color(1.0, 1.0, 1.0, 1.0);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
@@ -1251,13 +1332,18 @@ double NewFieldColumn::get_hold_draw_beat(TapNote const& tap, double const hold_
 
 void NewFieldColumn::build_render_lists()
 {
+	mod_val_inputs input(m_curr_beat, m_curr_second);
+	transform trans;
+	m_column_mod.evaluate(input, trans);
+	set_transform(trans);
+
 	render_holds.clear();
 	render_taps.clear();
 	m_status.dist_to_upcoming_arrow= 1000.0;
 	m_status.prev_active_hold= m_status.active_hold;
 	m_status.active_hold= nullptr;
-	double first_beat= m_curr_beat - calc_beat_for_y_offset(m_pixels_visible_before_beat);
-	double last_beat= m_curr_beat + calc_beat_for_y_offset(m_pixels_visible_after_beat);
+	double first_beat= m_curr_beat + calc_beat_for_y_offset(first_y_offset_visible);
+	double last_beat= m_curr_beat + calc_beat_for_y_offset(last_y_offset_visible);
 	double dist_factor= 1.0 / (last_beat - m_curr_beat);
 	NoteData::TrackMap::const_iterator begin, end;
 	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
@@ -1333,6 +1419,7 @@ void NewFieldColumn::draw_children()
 void NewFieldColumn::draw_holds_internal()
 {
 	double const beat= m_curr_beat - floor(m_curr_beat);
+	bool const reverse= reverse_scale_sign < 0.0;
 	for(auto&& holdit : render_holds)
 	{
 		// The hold loop does not need to call update_upcoming or
@@ -1344,7 +1431,7 @@ void NewFieldColumn::draw_holds_internal()
 		double const quantization= quantization_for_beat(hold_beat);
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
-		m_newskin->get_hold_render_data(tn.subType, active, quantization, beat, data);
+		m_newskin->get_hold_render_data(tn.subType, active, reverse, quantization, beat, data);
 		double hold_draw_beat= get_hold_draw_beat(tn, hold_beat);
 		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
@@ -1455,10 +1542,7 @@ void NewFieldColumn::draw_taps_internal()
 			{
 				transform trans;
 				calc_transform_for_beat(act.draw_beat, trans);
-				trans.rot.x= RadianToDegree(trans.rot.x);
-				trans.rot.y= RadianToDegree(trans.rot.y);
-				trans.rot.z= RadianToDegree(trans.rot.z);
-				trans.pos.y+= act.y_offset;
+				trans.pos.y+= apply_reverse_shift(act.y_offset);
 				act.act->set_transform(trans);
 				act.act->Draw();
 			}
@@ -1487,8 +1571,7 @@ void NewFieldColumn::DrawPrimitives()
 REGISTER_ACTOR_CLASS(NewField);
 
 NewField::NewField()
-	:m_pos_mod(&m_mod_manager, 0.0), m_rot_mod(&m_mod_manager, 0.0),
-	 m_zoom_mod(&m_mod_manager, 1.0),
+	:m_trans_mod(&m_mod_manager),
 	 m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr)
 {
 	m_skin_walker.load_from_file(SpecialFiles::NEWSKINS_DIR + "default/noteskin.lua");
@@ -1520,11 +1603,9 @@ bool NewField::EarlyAbortDraw() const
 
 void NewField::PreDraw()
 {
-	mod_val_inputs input(m_curr_beat, m_curr_second, m_curr_beat, m_curr_second);
+	mod_val_inputs input(m_curr_beat, m_curr_second);
 	transform trans;
-	m_pos_mod.evaluate(input, trans.pos);
-	m_rot_mod.evaluate(input, trans.rot);
-	m_zoom_mod.evaluate(input, trans.zoom);
+	m_trans_mod.evaluate(input, trans);
 	set_transform(trans);
 	ActorFrame::PreDraw();
 }
@@ -1534,8 +1615,8 @@ void NewField::DrawPrimitives()
 	vector<transform> column_trans(m_columns.size());
 	for(size_t c= 0; c < m_columns.size(); ++c)
 	{
-		m_columns[c].calc_transform_for_head(column_trans[c]);
 		m_columns[c].build_render_lists();
+		m_columns[c].calc_transform_for_head(column_trans[c]);
 		set_note_upcoming(c, m_columns[c].m_status.dist_to_upcoming_arrow);
 		// The hold status should be updated if there is a currently active hold
 		// or if there was one last frame.
@@ -1804,37 +1885,55 @@ void NewField::set_note_upcoming(size_t column, double distance)
 
 
 // lua start
-#define GET_MOD(dim, part) \
-	static int get_##dim##_##part##_mod(T* p, lua_State* L) \
-	{ \
-		p->m_##part##_mod.dim##_mod.PushSelf(L); \
-		return 1; \
-	}
-#define GET_MOD_SET(part) GET_MOD(x, part); GET_MOD(y, part); GET_MOD(z, part);
-#define ADD_MOD_SET(part) ADD_METHOD(get_x_##part##_mod); ADD_METHOD(get_y_##part##_mod); ADD_METHOD(get_z_##part##_mod);
+#define GET_MEMBER(member) \
+static int get_##member(T* p, lua_State* L) \
+{ \
+	p->m_##member.PushSelf(L); \
+	return 1; \
+}
+#define GET_TRANS_DIM(trans, part, dim) \
+static int get_##trans##_##part##_##dim##_mod(T* p, lua_State* L) \
+{ \
+	p->m_##trans##_mod.part##_mod.dim##_mod.PushSelf(L); \
+	return 1; \
+}
+#define GET_TRANS_PART(trans, part) \
+GET_TRANS_DIM(trans, part, x); \
+GET_TRANS_DIM(trans, part, y); \
+GET_TRANS_DIM(trans, part, z);
+#define GET_TRANS(trans) \
+GET_TRANS_PART(trans, pos); \
+GET_TRANS_PART(trans, rot); \
+GET_TRANS_PART(trans, zoom);
+#define ADD_TRANS_PART(trans, part) \
+ADD_METHOD(get_##trans##_##part##_##x_mod); \
+ADD_METHOD(get_##trans##_##part##_##y_mod); \
+ADD_METHOD(get_##trans##_##part##_##z_mod);
+#define ADD_TRANS(trans) \
+ADD_TRANS_PART(trans, pos); \
+ADD_TRANS_PART(trans, rot); \
+ADD_TRANS_PART(trans, zoom);
 
 struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
-	static int get_quantization_multiplier(T* p, lua_State* L)
-	{
-		p->m_quantization_multiplier.PushSelf(L);
-		return 1;
-	}
-	static int get_quantization_offset(T* p, lua_State* L)
-	{
-		p->m_quantization_offset.PushSelf(L);
-		return 1;
-	}
-	GET_MOD_SET(pos);
-	GET_MOD_SET(rot);
-	GET_MOD_SET(zoom);
+	GET_MEMBER(quantization_multiplier);
+	GET_MEMBER(quantization_offset);
+	GET_MEMBER(reverse_offset_pixels);
+	GET_MEMBER(reverse_percent);
+	GET_MEMBER(center_percent);
+	GET_TRANS(note);
+	GET_TRANS(column);
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
 		ADD_METHOD(get_quantization_offset);
-		ADD_MOD_SET(pos);
-		ADD_MOD_SET(rot);
-		ADD_MOD_SET(zoom);
+		ADD_METHOD(get_quantization_multiplier);
+		ADD_METHOD(get_quantization_offset);
+		ADD_METHOD(get_reverse_offset_pixels);
+		ADD_METHOD(get_reverse_percent);
+		ADD_METHOD(get_center_percent);
+		ADD_TRANS(note);
+		ADD_TRANS(column);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
@@ -1865,18 +1964,14 @@ struct LunaNewField : Luna<NewField>
 		p->push_columns_to_lua(L);
 		return 1;
 	}
-	GET_MOD_SET(pos);
-	GET_MOD_SET(rot);
-	GET_MOD_SET(zoom);
+	GET_TRANS(trans);
 	LunaNewField()
 	{
 		ADD_METHOD(set_speed);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_METHOD(set_steps);
 		ADD_METHOD(get_columns);
-		ADD_MOD_SET(pos);
-		ADD_MOD_SET(rot);
-		ADD_MOD_SET(zoom);
+		ADD_TRANS(trans);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewField, ActorFrame);

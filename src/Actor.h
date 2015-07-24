@@ -2,6 +2,7 @@
 #define ACTOR_H
 
 #include "PlayerNumber.h"
+#include "RageMath.h"
 #include "RageTypes.h"
 #include "RageUtil_AutoPtr.h"
 #include "LuaReference.h"
@@ -101,13 +102,6 @@ enum EffectAction
 };
 LuaDeclareType( EffectAction );
 */
-
-struct transform // robot in disguise
-{
-	RageVector3 pos;
-	RageVector3 rot;
-	RageVector3 zoom;
-};
 
 /** @brief Base class for all objects that appear on the screen. */
 class Actor : public MessageSubscriber
@@ -342,7 +336,9 @@ public:
 	{
 		TweenState& dest= DestTweenState();
 		dest.pos= trans.pos;
-		dest.rotation= trans.rot;
+		dest.rotation.x= RadianToDegree(trans.rot.x);
+		dest.rotation.y= RadianToDegree(trans.rot.y);
+		dest.rotation.z= RadianToDegree(trans.rot.z);
 		dest.scale= trans.zoom;
 	}
 	void  SetX( float x )				{ DestTweenState().pos.x = x; };

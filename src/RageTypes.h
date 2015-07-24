@@ -393,6 +393,13 @@ public:
 	float m[4][4];
 };
 
+struct transform // robot in disguise
+{
+	RageVector3 pos;
+	RageVector3 rot;
+	RageVector3 zoom;
+};
+
 #endif
 
 /*

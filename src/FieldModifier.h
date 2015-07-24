@@ -113,6 +113,9 @@ struct mod_val_inputs
 	double const eval_second;
 	double const music_beat;
 	double const music_second;
+	mod_val_inputs(double const mb, double const ms)
+		:eval_beat(mb), eval_second(ms), music_beat(mb), music_second(ms)
+	{}
 	mod_val_inputs(double const eb, double const es, double const mb, double const ms)
 		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms)
 	{}
@@ -226,6 +229,22 @@ struct ModifiableVector3
 	ModifiableValue x_mod;
 	ModifiableValue y_mod;
 	ModifiableValue z_mod;
+};
+
+struct ModifiableTransform
+{
+	ModifiableTransform(ModManager* man)
+		:pos_mod(man, 0.0), rot_mod(man, 0.0), zoom_mod(man, 1.0)
+	{}
+	void evaluate(mod_val_inputs const& input, transform& out)
+	{
+		pos_mod.evaluate(input, out.pos);
+		rot_mod.evaluate(input, out.rot);
+		zoom_mod.evaluate(input, out.zoom);
+	}
+	ModifiableVector3 pos_mod;
+	ModifiableVector3 rot_mod;
+	ModifiableVector3 zoom_mod;
 };
 
 #endif

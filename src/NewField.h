@@ -213,9 +213,17 @@ struct QuantizedHold
 struct NewSkinColumn
 {
 	Actor* get_tap_actor(NewSkinTapPart type, double quantization, double beat);
-	Actor* get_optional_actor(NewSkinTapOptionalPart type, double quantization, double beat);
-	void get_hold_render_data(TapNoteSubType sub_type, bool active, double quantization, double beat, QuantizedHoldRenderData& data);
-	bool load_from_lua(lua_State* L, int index, std::string const& load_dir, std::string& insanity_diagnosis);
+	Actor* get_optional_actor(NewSkinTapOptionalPart type, double quantization,
+		double beat);
+	void get_hold_render_data(TapNoteSubType sub_type, bool active,
+		bool reverse, double quantization, double beat,
+		QuantizedHoldRenderData& data);
+	bool load_holds_from_lua(lua_State* L, int index,
+		std::vector<std::vector<QuantizedHold> >& holder,
+		std::string const& holds_name,
+		std::string const& load_dir, std::string& insanity_diagnosis);
+	bool load_from_lua(lua_State* L, int index, std::string const& load_dir,
+		std::string& insanity_diagnosis);
 	void vivid_operation(bool vivid)
 	{
 		for(auto&& tap : m_taps)
@@ -230,6 +238,13 @@ struct NewSkinColumn
 			}
 		}
 		for(auto&& subtype : m_holds)
+		{
+			for(auto&& action : subtype)
+			{
+				action.m_vivid= vivid;
+			}
+		}
+		for(auto&& subtype : m_reverse_holds)
 		{
 			for(auto&& action : subtype)
 			{
@@ -263,6 +278,7 @@ private:
 	// Dimensions of m_holds:
 	// note subtype, active/inactive.
 	std::vector<std::vector<QuantizedHold> > m_holds;
+	std::vector<std::vector<QuantizedHold> > m_reverse_holds;
 	// m_rotation_factors stores the amount to rotate each NSTP.
 	// So the noteskin can set taps to rotate 90 degrees in this column and
 	// mines to rotate 0, and taps will be rotated and mines won't.
@@ -393,7 +409,7 @@ struct NewFieldColumn : ActorFrame
 	void update_displayed_beat(double beat, double second);
 	bool y_offset_visible(double off)
 	{
-		return off >= -m_pixels_visible_before_beat && off <= m_pixels_visible_after_beat;
+		return off >= first_y_offset_visible && off <= last_y_offset_visible;
 	}
 	double calc_y_offset_for_beat(double beat);
 	double calc_y_offset_for_curr_beat()
@@ -403,7 +419,8 @@ struct NewFieldColumn : ActorFrame
 	double calc_beat_for_y_offset(double y_offset);
 	double quantization_for_beat(double beat)
 	{
-		mod_val_inputs input(beat, 0.0, m_curr_beat, 0.0);
+		double second= m_timing_data->GetElapsedTimeFromBeat(beat);
+		mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 		double mult= m_quantization_multiplier.evaluate(input);
 		double offset= m_quantization_offset.evaluate(input);
 		return fmodf((beat * mult) + offset, 1.0);
@@ -411,9 +428,10 @@ struct NewFieldColumn : ActorFrame
 	void calc_transform_for_beat(double beat, transform& trans);
 	void calc_transform_for_head(transform& trans)
 	{
+		double render_y= apply_reverse_shift(0.0);
 		calc_transform_for_beat(m_curr_beat, trans);
 		trans.pos.x+= GetX();
-		trans.pos.y+= GetY();
+		trans.pos.y+= GetY() + render_y;
 		trans.pos.z+= GetZ();
 		trans.rot.x+= GetRotationX();
 		trans.rot.y+= GetRotationY();
@@ -422,6 +440,8 @@ struct NewFieldColumn : ActorFrame
 		trans.zoom.y*= GetZoomY() * GetBaseZoomY();
 		trans.zoom.z*= GetZoomZ() * GetBaseZoomZ();
 	}
+	void calc_reverse_shift();
+	double apply_reverse_shift(double y_offset);
 	void build_render_lists();
 	void draw_holds();
 	void draw_taps();
@@ -453,9 +473,12 @@ struct NewFieldColumn : ActorFrame
 	ModifiableValue m_quantization_multiplier;
 	ModifiableValue m_quantization_offset;
 
-	ModifiableVector3 m_pos_mod;
-	ModifiableVector3 m_rot_mod;
-	ModifiableVector3 m_zoom_mod;
+	ModifiableValue m_reverse_offset_pixels;
+	ModifiableValue m_reverse_percent;
+	ModifiableValue m_center_percent;
+
+	ModifiableTransform m_note_mod;
+	ModifiableTransform m_column_mod;
 
 private:
 	double m_curr_beat;
@@ -482,6 +505,13 @@ private:
 	std::vector<NoteData::TrackMap::const_iterator> render_holds;
 	std::vector<NoteData::TrackMap::const_iterator> render_taps;
 	render_step curr_render_step;
+	// Calculating the effects of reverse and center for every note is costly.
+	// Only do it once per frame and store the result.
+	double reverse_shift;
+	double reverse_scale;
+	double reverse_scale_sign;
+	double first_y_offset_visible;
+	double last_y_offset_visible;
 };
 
 struct NewField : ActorFrame
@@ -513,9 +543,7 @@ struct NewField : ActorFrame
 	void set_note_upcoming(size_t column, double distance);
 
 	ModManager m_mod_manager;
-	ModifiableVector3 m_pos_mod;
-	ModifiableVector3 m_rot_mod;
-	ModifiableVector3 m_zoom_mod;
+	ModifiableTransform m_trans_mod;
 
 private:
 	double m_curr_beat;

@@ -19,6 +19,14 @@ return function(button_list)
 		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
 		Down= "TexCoordFlipMode_None", Up= "TexCoordFlipMode_None",
 	}
+	local rev_hold_flips= {
+		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
+		Down= "TexCoordFlipMode_Y", Up= "TexCoordFlipMode_None",
+	}
+	local rev_roll_flips= {
+		Left= "TexCoordFlipMode_None", Right= "TexCoordFlipMode_X",
+		Down= "TexCoordFlipMode_Y", Up= "TexCoordFlipMode_Y",
+	}
 	local hold_buttons= {
 		Left= "left", Right= "left", Down= "down", Up= "down",
 	}
@@ -222,6 +230,35 @@ return function(button_list)
 						state_map= active_state_map,
 						textures= {roll_tex},
 						flip= roll_flips[button],
+					},
+				},
+			},
+			-- reverse_holds is the same as holds, but for when the reverse mod is
+			-- being used.  Notice that it's using the same textures, but flipping
+			-- them differently.
+			reverse_holds= {
+				TapNoteSubType_Hold= {
+					{
+						state_map= inactive_state_map,
+						textures= {hold_tex},
+						flip= rev_hold_flips[button],
+					},
+					{
+						state_map= active_state_map,
+						textures= {hold_tex},
+						flip= rev_hold_flips[button],
+					},
+				},
+				TapNoteSubType_Roll= {
+					{
+						state_map= inactive_state_map,
+						textures= {roll_tex},
+						flip= rev_roll_flips[button],
+					},
+					{
+						state_map= active_state_map,
+						textures= {roll_tex},
+						flip= rev_roll_flips[button],
 					},
 				},
 			},

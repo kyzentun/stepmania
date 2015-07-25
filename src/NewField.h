@@ -404,19 +404,15 @@ struct NewFieldColumn : ActorFrame
 	void set_column_info(size_t column, NewSkinColumn* newskin,
 		const NoteData* note_data, const TimingData* timing_data, double x);
 
-	double get_hold_draw_beat(TapNote const& tap, double const hold_beat);
-	void draw_hold(QuantizedHoldRenderData& data, double x, double y, double len);
+	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
+	void draw_hold(QuantizedHoldRenderData& data, double head_beat,
+		double head_second, double len);
 	void update_displayed_beat(double beat, double second);
 	bool y_offset_visible(double off)
 	{
 		return off >= first_y_offset_visible && off <= last_y_offset_visible;
 	}
-	double calc_y_offset_for_beat(double beat);
-	double calc_y_offset_for_curr_beat()
-	{
-		return calc_y_offset_for_beat(m_curr_beat);
-	}
-	double calc_beat_for_y_offset(double y_offset);
+	double calc_y_offset(double beat, double second);
 	double quantization_for_beat(double beat)
 	{
 		double second= m_timing_data->GetElapsedTimeFromBeat(beat);
@@ -425,11 +421,12 @@ struct NewFieldColumn : ActorFrame
 		double offset= m_quantization_offset.evaluate(input);
 		return fmodf((beat * mult) + offset, 1.0);
 	}
-	void calc_transform_for_beat(double beat, transform& trans);
+	void calc_transform(double beat, double second, transform& trans);
 	void calc_transform_for_head(transform& trans)
 	{
-		double render_y= apply_reverse_shift(0.0);
-		calc_transform_for_beat(m_curr_beat, trans);
+		double y_offset= calc_y_offset(m_curr_beat, m_curr_second);
+		double render_y= apply_reverse_shift(y_offset);
+		calc_transform(m_curr_beat, m_curr_second, trans);
 		trans.pos.x+= GetX();
 		trans.pos.y+= GetY() + render_y;
 		trans.pos.z+= GetZ();
@@ -472,6 +469,8 @@ struct NewFieldColumn : ActorFrame
 	ModManager m_mod_manager;
 	ModifiableValue m_quantization_multiplier;
 	ModifiableValue m_quantization_offset;
+
+	ModifiableValue m_speed_mod;
 
 	ModifiableValue m_reverse_offset_pixels;
 	ModifiableValue m_reverse_percent;

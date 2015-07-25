@@ -28,7 +28,6 @@ using std::unordered_set;
 using std::vector;
 
 static const double note_size= 64.0;
-static double speed_multiplier= 4.0;
 
 static const char* NewSkinTapPartNames[] = {
 	"Tap",
@@ -899,6 +898,7 @@ REGISTER_ACTOR_CLASS(NewFieldColumn);
 NewFieldColumn::NewFieldColumn()
 	:m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
+	 m_speed_mod(&m_mod_manager, 1.0),
 	 m_reverse_offset_pixels(&m_mod_manager, 0.0),
 	 m_reverse_percent(&m_mod_manager, 0.0),
 	 m_center_percent(&m_mod_manager, 0.0),
@@ -936,19 +936,14 @@ void NewFieldColumn::update_displayed_beat(double beat, double second)
 	}
 }
 
-double NewFieldColumn::calc_y_offset_for_beat(double beat)
+double NewFieldColumn::calc_y_offset(double beat, double second)
 {
-	return beat * note_size * speed_multiplier;
+	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
+	return note_size * m_speed_mod.evaluate(input);
 }
 
-double NewFieldColumn::calc_beat_for_y_offset(double y_offset)
+void NewFieldColumn::calc_transform(double beat, double second, transform& trans)
 {
-	return y_offset / (speed_multiplier * note_size);
-}
-
-void NewFieldColumn::calc_transform_for_beat(double beat, transform& trans)
-{
-	double second= m_timing_data->GetElapsedTimeFromBeat(beat);
 	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 	m_note_mod.evaluate(input, trans);
 }
@@ -1063,7 +1058,7 @@ struct hold_texture_handler
 	double prev_partial;
 	int prev_phase;
 	bool started_bottom;
-	hold_texture_handler(double const note_size, double const y, double const len, double const tex_t, double const tex_b)
+	hold_texture_handler(double const note_size, double const head_y, double const tail_y, double const tex_t, double const tex_b)
 	{
 		tex_top= tex_t;
 		tex_bottom= tex_b;
@@ -1073,9 +1068,9 @@ struct hold_texture_handler
 		tex_cap_end= tex_top + tex_cap_height;
 		tex_body_end= tex_bottom - tex_cap_height;
 		tex_per_y= tex_body_height / note_size;
-		start_y= y - (note_size * .5);
-		body_start_y= y;
-		body_end_y= y + (len * note_size);
+		start_y= head_y - (note_size * .5);
+		body_start_y= head_y;
+		body_end_y= tail_y;
 		end_y= body_end_y + (note_size * .5);
 		// constants go above this line.
 		prev_partial= 2.0;
@@ -1168,6 +1163,21 @@ private:
 	}
 };
 
+struct hold_time_lerper
+{
+	double start_y_off;
+	double y_off_len;
+	double start_time;
+	double time_len;
+	hold_time_lerper(double sy, double yl, double st, double tl)
+		:start_y_off(sy), y_off_len(yl), start_time(st), time_len(tl)
+	{}
+	double lerp(double y_off)
+	{
+		return (((y_off - start_y_off) * time_len) / y_off_len) + start_time;
+	}
+};
+
 static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	RageVector3 const& left, RageVector3 const& center,
 	RageVector3 const& right, RageColor const& color,
@@ -1178,7 +1188,7 @@ static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	verts_to_draw.add_vert(right, color, RageVector2(tex_right, tex_y));
 }
 
-void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y, double len)
+void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, double head_second, double len)
 {
 	// pos_z_vec will be used later to orient the hold.  Read below. -Kyz
 	static const RageVector3 pos_z_vec(0.0f, 0.0f, 1.0f);
@@ -1205,7 +1215,14 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 		default:
 			break;
 	}
-	hold_texture_handler tex_handler(note_size, y, len, tex_top, tex_bottom);
+	double tail_beat= head_beat + len;
+	double tail_second= m_timing_data->GetElapsedTimeFromBeat(tail_beat);
+	double head_y_offset= calc_y_offset(head_beat, head_second);
+	double tail_y_offset= calc_y_offset(tail_beat, tail_second);
+	double y_off_len= tail_y_offset - head_y_offset;
+	hold_time_lerper beat_lerper(head_y_offset, y_off_len, head_beat, tail_beat - head_beat);
+	hold_time_lerper second_lerper(head_y_offset, y_off_len, head_second, tail_second - head_second);
+	hold_texture_handler tex_handler(note_size, head_y_offset, tail_y_offset, tex_top, tex_bottom);
 	double const body_start_render_y= apply_reverse_shift(tex_handler.body_start_y);
 	double const body_end_render_y= apply_reverse_shift(tex_handler.body_end_y);
 	double const tex_center= (tex_left + tex_right) * .5;
@@ -1232,9 +1249,11 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 		{
 			last_vert_set= true;
 		}
+		double curr_beat= beat_lerper.lerp(curr_y);
+		double curr_second= second_lerper.lerp(curr_y);
 
 		transform trans;
-		calc_transform_for_beat(m_curr_beat + calc_beat_for_y_offset(curr_y), trans);
+		calc_transform(curr_beat, curr_second, trans);
 
 		// TODO: get render_forward from a spline.
 		const RageVector3 render_forward(0.0f, 1.0f, 0.0f);
@@ -1268,10 +1287,10 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double x, double y
 				break;
 		}
 		const RageVector3 left_vert(
-			x + render_left.x + trans.pos.x, render_y + render_left.y,
+			render_left.x + trans.pos.x, render_y + render_left.y,
 			render_left.z + trans.pos.z);
-		const RageVector3 center_vert(x + trans.pos.x, render_y, 0 + trans.pos.z);
-		const RageVector3 right_vert(x + -render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
+		const RageVector3 center_vert(trans.pos.x, render_y, 0 + trans.pos.z);
+		const RageVector3 right_vert(-render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
 		const RageColor color(1.0, 1.0, 1.0, 1.0);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
@@ -1316,18 +1335,25 @@ void NewFieldColumn::update_active_hold(TapNote const& tap)
 	}
 }
 
-double NewFieldColumn::get_hold_draw_beat(TapNote const& tap, double const hold_beat)
+void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second)
 {
 	double const last_held= tap.HoldResult.GetLastHeldBeat();
 	if(last_held > hold_beat)
 	{
 		if(fabs(last_held - m_curr_beat) < .01)
 		{
-			return m_curr_beat;
+			beat= m_curr_beat;
+			second= m_curr_second;
+			return;
 		}
-		return last_held;
+		// TODO: Figure out whether this does the wrong thing for holds that are
+		// released during a stop.
+		beat= last_held;
+		second= m_timing_data->GetElapsedTimeFromBeat(beat);
+		return;
 	}
-	return hold_beat;
+	beat= hold_beat;
+	second= m_timing_data->GetElapsedTimeFromBeat(beat);
 }
 
 void NewFieldColumn::build_render_lists()
@@ -1342,8 +1368,8 @@ void NewFieldColumn::build_render_lists()
 	m_status.dist_to_upcoming_arrow= 1000.0;
 	m_status.prev_active_hold= m_status.active_hold;
 	m_status.active_hold= nullptr;
-	double first_beat= m_curr_beat + calc_beat_for_y_offset(first_y_offset_visible);
-	double last_beat= m_curr_beat + calc_beat_for_y_offset(last_y_offset_visible);
+	double first_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second - 1.0);
+	double last_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second + 10.0);
 	double dist_factor= 1.0 / (last_beat - m_curr_beat);
 	NoteData::TrackMap::const_iterator begin, end;
 	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
@@ -1432,13 +1458,13 @@ void NewFieldColumn::draw_holds_internal()
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
 		m_newskin->get_hold_render_data(tn.subType, active, reverse, quantization, beat, data);
-		double hold_draw_beat= get_hold_draw_beat(tn, hold_beat);
+		double hold_draw_beat;
+		double hold_draw_second;
+		get_hold_draw_time(tn, hold_beat, hold_draw_beat, hold_draw_second);
 		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
 		{
-			double y= calc_y_offset_for_beat(hold_draw_beat - m_curr_beat);
-			draw_hold(data, 0.0, y, (NoteRowToBeat(tn.iDuration) - passed_amount)
-				* speed_multiplier);
+			draw_hold(data, hold_draw_beat, hold_draw_second, NoteRowToBeat(tn.iDuration) - passed_amount);
 		}
 	}
 }
@@ -1446,10 +1472,11 @@ void NewFieldColumn::draw_holds_internal()
 struct tap_draw_info
 {
 	double draw_beat;
+	double draw_second;
 	double y_offset;
 	Actor* act;
 	tap_draw_info()
-		:draw_beat(0.0), y_offset(0.0), act(nullptr)
+		:draw_beat(0.0), draw_second(0.0), y_offset(0.0), act(nullptr)
 	{}
 };
 
@@ -1467,6 +1494,8 @@ void NewFieldColumn::draw_taps_internal()
 		NewSkinTapOptionalPart tail_part= NewSkinTapOptionalPart_Invalid;
 		double head_beat;
 		double tail_beat;
+		double head_second;
+		double tail_second;
 		switch(tn.type)
 		{
 			case TapNoteType_Mine:
@@ -1479,7 +1508,7 @@ void NewFieldColumn::draw_taps_internal()
 				break;
 			case TapNoteType_HoldHead:
 				part= NewSkinTapPart_Invalid;
-				head_beat= get_hold_draw_beat(tn, tap_beat);
+				get_hold_draw_time(tn, tap_beat, head_beat, head_second);
 				tail_beat= m_curr_beat + NoteRowToBeat(tn.iDuration);
 				switch(tn.subType)
 				{
@@ -1511,27 +1540,32 @@ void NewFieldColumn::draw_taps_internal()
 		vector<tap_draw_info> acts(2);
 		if(part != NewSkinTapPart_Invalid)
 		{
+			head_second= m_timing_data->GetElapsedTimeFromBeat(head_beat);
 			acts[0].draw_beat= head_beat;
-			acts[0].y_offset= calc_y_offset_for_beat(head_beat - m_curr_beat);
+			acts[0].y_offset= calc_y_offset(head_beat, head_second);
 			if(y_offset_visible(acts[0].y_offset))
 			{
 				acts[0].act= m_newskin->get_tap_actor(part, quantization, beat);
+				acts[0].draw_second= m_timing_data->GetElapsedTimeFromBeat(head_beat);
 			}
 		}
 		else
 		{
+			tail_second= m_timing_data->GetElapsedTimeFromBeat(tail_beat);
 			// Put tails on the list first because they need to be under the heads.
 			acts[0].draw_beat= tail_beat;
-			acts[0].y_offset= calc_y_offset_for_beat(tail_beat - m_curr_beat);
+			acts[0].y_offset= calc_y_offset(tail_beat, tail_second);
 			if(y_offset_visible(acts[0].y_offset))
 			{
 				acts[0].act= m_newskin->get_optional_actor(tail_part, quantization, beat);
+				acts[0].draw_second= tail_second;
 			}
 			acts[1].draw_beat= head_beat;
-			acts[1].y_offset= calc_y_offset_for_beat(head_beat - m_curr_beat);
+			acts[1].y_offset= calc_y_offset(head_beat, head_second);
 			if(y_offset_visible(acts[1].y_offset))
 			{
 				acts[1].act= m_newskin->get_optional_actor(head_part, quantization, beat);
+				acts[1].draw_second= head_second;
 			}
 		}
 		for(auto&& act : acts)
@@ -1541,7 +1575,7 @@ void NewFieldColumn::draw_taps_internal()
 			if(act.act != nullptr)
 			{
 				transform trans;
-				calc_transform_for_beat(act.draw_beat, trans);
+				calc_transform(act.draw_beat, act.draw_second, trans);
 				trans.pos.y+= apply_reverse_shift(act.y_offset);
 				act.act->set_transform(trans);
 				act.act->Draw();
@@ -1918,6 +1952,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
 	GET_MEMBER(quantization_multiplier);
 	GET_MEMBER(quantization_offset);
+	GET_MEMBER(speed_mod);
 	GET_MEMBER(reverse_offset_pixels);
 	GET_MEMBER(reverse_percent);
 	GET_MEMBER(center_percent);
@@ -1927,8 +1962,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	{
 		ADD_METHOD(get_quantization_multiplier);
 		ADD_METHOD(get_quantization_offset);
-		ADD_METHOD(get_quantization_multiplier);
-		ADD_METHOD(get_quantization_offset);
+		ADD_METHOD(get_speed_mod);
 		ADD_METHOD(get_reverse_offset_pixels);
 		ADD_METHOD(get_reverse_percent);
 		ADD_METHOD(get_center_percent);
@@ -1940,19 +1974,6 @@ LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);
 
 struct LunaNewField : Luna<NewField>
 {
-	static int get_curr_beat(T* p, lua_State* L)
-	{
-		return 1;
-	}
-	static int set_curr_beat(T* p, lua_State* L)
-	{
-		COMMON_RETURN_SELF;
-	}
-	static int set_speed(T* p, lua_State* L)
-	{
-		speed_multiplier= FArg(1);
-		COMMON_RETURN_SELF;
-	}
 	static int set_steps(T* p, lua_State* L)
 	{
 		Steps* data= Luna<Steps>::check(L, 1);
@@ -1967,8 +1988,6 @@ struct LunaNewField : Luna<NewField>
 	GET_TRANS(trans);
 	LunaNewField()
 	{
-		ADD_METHOD(set_speed);
-		ADD_GET_SET_METHODS(curr_beat);
 		ADD_METHOD(set_steps);
 		ADD_METHOD(get_columns);
 		ADD_TRANS(trans);

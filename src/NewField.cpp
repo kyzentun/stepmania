@@ -925,6 +925,7 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_timing_data= timing_data;
 	m_column_mod.pos_mod.x_mod.get_value().set_value_instant(x);
 	m_use_game_music_beat= true;
+	first_note_visible_prev_frame= m_note_data->end(column);
 }
 
 void NewFieldColumn::update_displayed_beat(double beat, double second)
@@ -1188,7 +1189,7 @@ static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	verts_to_draw.add_vert(right, color, RageVector2(tex_right, tex_y));
 }
 
-void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, double head_second, double len)
+void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, double head_second, double tail_beat, double tail_second)
 {
 	// pos_z_vec will be used later to orient the hold.  Read below. -Kyz
 	static const RageVector3 pos_z_vec(0.0f, 0.0f, 1.0f);
@@ -1215,8 +1216,6 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 		default:
 			break;
 	}
-	double tail_beat= head_beat + len;
-	double tail_second= m_timing_data->GetElapsedTimeFromBeat(tail_beat);
 	double head_y_offset= calc_y_offset(head_beat, head_second);
 	double tail_y_offset= calc_y_offset(tail_beat, tail_second);
 	double y_off_len= tail_y_offset - head_y_offset;
@@ -1318,12 +1317,14 @@ bool NewFieldColumn::EarlyAbortDraw() const
 	return m_newskin == nullptr || m_note_data == nullptr || m_timing_data == nullptr;
 }
 
-void NewFieldColumn::update_upcoming(int row, double dist_factor)
+void NewFieldColumn::update_upcoming(double beat, double second)
 {
-	double const dist= (NoteRowToBeat(row) - m_curr_beat) * dist_factor;
-	if(dist > 0 && dist < m_status.dist_to_upcoming_arrow)
+	double const beat_dist= beat - m_curr_beat;
+	double const sec_dist= second - m_curr_second;
+	if(sec_dist > 0 && sec_dist < m_status.upcoming_second_dist)
 	{
-		m_status.dist_to_upcoming_arrow= dist;
+		m_status.upcoming_beat_dist= beat_dist;
+		m_status.upcoming_second_dist= sec_dist;
 	}
 }
 
@@ -1349,11 +1350,11 @@ void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_be
 		// TODO: Figure out whether this does the wrong thing for holds that are
 		// released during a stop.
 		beat= last_held;
-		second= m_timing_data->GetElapsedTimeFromBeat(beat);
+		second= tap.HoldResult.last_held_second;
 		return;
 	}
 	beat= hold_beat;
-	second= m_timing_data->GetElapsedTimeFromBeat(beat);
+	second= tap.occurs_at_second;
 }
 
 void NewFieldColumn::build_render_lists()
@@ -1365,19 +1366,44 @@ void NewFieldColumn::build_render_lists()
 
 	render_holds.clear();
 	render_taps.clear();
-	m_status.dist_to_upcoming_arrow= 1000.0;
+	m_status.upcoming_beat_dist= 1000.0;
+	m_status.upcoming_second_dist= 1000.0;
 	m_status.prev_active_hold= m_status.active_hold;
 	m_status.active_hold= nullptr;
-	double first_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second - 1.0);
-	double last_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second + 10.0);
-	double dist_factor= 1.0 / (last_beat - m_curr_beat);
-	NoteData::TrackMap::const_iterator begin, end;
-	m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat),
-		BeatToNoteRow(last_beat), begin, end);
-	for(; begin != end; ++begin)
+
+	NoteData::TrackMap::const_iterator column_end= m_note_data->end(m_column);
+	if(first_note_visible_prev_frame == column_end)
 	{
-		int tap_row= begin->first;
-		const TapNote& tn= begin->second;
+		NoteData::TrackMap::const_iterator discard;
+		double first_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second - 1.0);
+		m_note_data->GetTapNoteRangeInclusive(m_column, BeatToNoteRow(first_beat), BeatToNoteRow(first_beat + 2), first_note_visible_prev_frame, discard);
+	}
+
+	double const max_try_second= m_curr_second + 5.0;
+	NoteData::TrackMap::const_iterator first_visible_this_frame= column_end;
+	bool found_end_of_visible_notes= false;
+	for(NoteData::TrackMap::const_iterator curr_note= first_note_visible_prev_frame;
+			curr_note != column_end && !found_end_of_visible_notes; ++curr_note)
+	{
+		int tap_row= curr_note->first;
+		double tap_beat= NoteRowToBeat(tap_row);
+		const TapNote& tn= curr_note->second;
+		bool visible= note_visible(tn, tap_beat);
+		if(visible)
+		{
+			if(first_visible_this_frame == column_end)
+			{
+				first_visible_this_frame= curr_note;
+			}
+		}
+		else
+		{
+			if(first_visible_this_frame != column_end ||
+				tn.occurs_at_second > max_try_second)
+			{
+				found_end_of_visible_notes= true;
+			}
+		}
 		switch(tn.type)
 		{
 			case TapNoteType_Empty:
@@ -1390,8 +1416,8 @@ void NewFieldColumn::build_render_lists()
 			case TapNoteType_Fake:
 				if(!tn.result.bHidden)
 				{
-					render_taps.push_back(begin);
-					update_upcoming(tap_row, dist_factor);
+					render_taps.push_back(curr_note);
+					update_upcoming(tap_beat, tn.occurs_at_second);
 					update_active_hold(tn);
 				}
 				break;
@@ -1400,9 +1426,9 @@ void NewFieldColumn::build_render_lists()
 				{
 					// Hold heads are added to the tap list to take care of rendering
 					// heads and tails in the same phase as taps.
-					render_taps.push_back(begin);
-					render_holds.push_back(begin);
-					update_upcoming(tap_row, dist_factor);
+					render_taps.push_back(curr_note);
+					render_holds.push_back(curr_note);
+					update_upcoming(tap_beat, tn.occurs_at_second);
 					update_active_hold(tn);
 				}
 				break;
@@ -1410,6 +1436,7 @@ void NewFieldColumn::build_render_lists()
 				break;
 		}
 	}
+	first_note_visible_prev_frame= first_visible_this_frame;
 }
 
 void NewFieldColumn::draw_holds()
@@ -1454,7 +1481,8 @@ void NewFieldColumn::draw_holds_internal()
 		int hold_row= holdit->first;
 		TapNote const& tn= holdit->second;
 		double const hold_beat= NoteRowToBeat(hold_row);
-		double const quantization= quantization_for_beat(hold_beat);
+		double const hold_second= tn.occurs_at_second;
+		double const quantization= quantization_for_time(hold_beat, hold_second);
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
 		m_newskin->get_hold_render_data(tn.subType, active, reverse, quantization, beat, data);
@@ -1464,7 +1492,7 @@ void NewFieldColumn::draw_holds_internal()
 		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
 		{
-			draw_hold(data, hold_draw_beat, hold_draw_second, NoteRowToBeat(tn.iDuration) - passed_amount);
+			draw_hold(data, hold_draw_beat, hold_draw_second, hold_draw_beat + NoteRowToBeat(tn.iDuration) - passed_amount, tn.end_second);
 		}
 	}
 }
@@ -1488,7 +1516,8 @@ void NewFieldColumn::draw_taps_internal()
 		int tap_row= tapit->first;
 		TapNote const& tn= tapit->second;
 		double const tap_beat= NoteRowToBeat(tap_row);
-		double const quantization= quantization_for_beat(tap_beat);
+		double const tap_second= tn.occurs_at_second;
+		double const quantization= quantization_for_time(tap_beat, tap_second);
 		NewSkinTapPart part= NSTP_Tap;
 		NewSkinTapOptionalPart head_part= NewSkinTapOptionalPart_Invalid;
 		NewSkinTapOptionalPart tail_part= NewSkinTapOptionalPart_Invalid;
@@ -1540,18 +1569,18 @@ void NewFieldColumn::draw_taps_internal()
 		vector<tap_draw_info> acts(2);
 		if(part != NewSkinTapPart_Invalid)
 		{
-			head_second= m_timing_data->GetElapsedTimeFromBeat(head_beat);
+			head_second= tn.occurs_at_second;
 			acts[0].draw_beat= head_beat;
 			acts[0].y_offset= calc_y_offset(head_beat, head_second);
 			if(y_offset_visible(acts[0].y_offset))
 			{
 				acts[0].act= m_newskin->get_tap_actor(part, quantization, beat);
-				acts[0].draw_second= m_timing_data->GetElapsedTimeFromBeat(head_beat);
+				acts[0].draw_second= head_second;
 			}
 		}
 		else
 		{
-			tail_second= m_timing_data->GetElapsedTimeFromBeat(tail_beat);
+			tail_second= tn.end_second;
 			// Put tails on the list first because they need to be under the heads.
 			acts[0].draw_beat= tail_beat;
 			acts[0].y_offset= calc_y_offset(tail_beat, tail_second);
@@ -1651,7 +1680,8 @@ void NewField::DrawPrimitives()
 	{
 		m_columns[c].build_render_lists();
 		m_columns[c].calc_transform_for_head(column_trans[c]);
-		set_note_upcoming(c, m_columns[c].m_status.dist_to_upcoming_arrow);
+		set_note_upcoming(c, m_columns[c].m_status.upcoming_beat_dist,
+			m_columns[c].m_status.upcoming_second_dist);
 		// The hold status should be updated if there is a currently active hold
 		// or if there was one last frame.
 		if(m_columns[c].m_status.active_hold != nullptr ||
@@ -1824,9 +1854,10 @@ static vector<vector<string> > button_lists = {
 	{"DownLeftFoot", "UpLeftFoot", "UpLeftFist", "DownLeftFist", "DownRightFist", "UpRightFist", "UpRightFoot", "DownRightFoot"}
 };
 
-void NewField::set_note_data(NoteData* note_data, TimingData const* timing, Style const* curr_style)
+void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style const* curr_style)
 {
 	m_note_data= note_data;
+	note_data->SetOccuranceTimeForAllTaps(timing);
 	m_own_note_data= false;
 	StepsType button_stype= curr_style->m_StepsType;
 	// TODO:  Prevent or handle better the case of a style without a button list.
@@ -1910,10 +1941,11 @@ void NewField::set_pressed(size_t column, bool on)
 	m_newskin.pass_message_to_all_layers(column, msg);
 }
 
-void NewField::set_note_upcoming(size_t column, double distance)
+void NewField::set_note_upcoming(size_t column, double beat_distance, double second_distance)
 {
 	Message msg("Upcoming");
-	msg.SetParam("distance", distance);
+	msg.SetParam("beat_distance", beat_distance);
+	msg.SetParam("second_distance", second_distance);
 	m_newskin.pass_message_to_all_layers(column, msg);
 }
 

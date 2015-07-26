@@ -406,16 +406,25 @@ struct NewFieldColumn : ActorFrame
 
 	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
 	void draw_hold(QuantizedHoldRenderData& data, double head_beat,
-		double head_second, double len);
+		double head_second, double tail_beat, double tail_second);
 	void update_displayed_beat(double beat, double second);
 	bool y_offset_visible(double off)
 	{
 		return off >= first_y_offset_visible && off <= last_y_offset_visible;
 	}
-	double calc_y_offset(double beat, double second);
-	double quantization_for_beat(double beat)
+	bool note_visible(TapNote const& note, double const beat)
 	{
-		double second= m_timing_data->GetElapsedTimeFromBeat(beat);
+		if(note.type == TapNoteType_HoldHead)
+		{
+			return y_offset_visible(calc_y_offset(beat, note.occurs_at_second)) ||
+				y_offset_visible(calc_y_offset(beat + NoteRowToBeat(note.iDuration),
+						note.end_second));
+		}
+		return y_offset_visible(calc_y_offset(beat, note.occurs_at_second));
+	}
+	double calc_y_offset(double beat, double second);
+	double quantization_for_time(double beat, double second)
+	{
 		mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 		double mult= m_quantization_multiplier.evaluate(input);
 		double offset= m_quantization_offset.evaluate(input);
@@ -446,7 +455,7 @@ struct NewFieldColumn : ActorFrame
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
-	void update_upcoming(int row, double dist_factor);
+	void update_upcoming(double beat, double second);
 	void update_active_hold(TapNote const& tap);
 	virtual void DrawPrimitives();
 
@@ -460,7 +469,8 @@ struct NewFieldColumn : ActorFrame
 		column_status()
 			:active_hold(nullptr), prev_active_hold(nullptr)
 		{}
-		double dist_to_upcoming_arrow;
+		double upcoming_beat_dist;
+		double upcoming_second_dist;
 		TapNote const* active_hold;
 		TapNote const* prev_active_hold;
 	};
@@ -501,6 +511,7 @@ private:
 		RENDER_TAPS,
 		RENDER_CHILDREN
 	};
+	NoteData::TrackMap::const_iterator first_note_visible_prev_frame;
 	std::vector<NoteData::TrackMap::const_iterator> render_holds;
 	std::vector<NoteData::TrackMap::const_iterator> render_taps;
 	render_step curr_render_step;
@@ -531,7 +542,7 @@ struct NewField : ActorFrame
 
 	void clear_steps();
 	void set_steps(Steps* data);
-	void set_note_data(NoteData* note_data, TimingData const* timing, Style const* curr_style);
+	void set_note_data(NoteData* note_data, TimingData* timing, Style const* curr_style);
 
 	void update_displayed_beat(double beat, double second);
 
@@ -539,7 +550,7 @@ struct NewField : ActorFrame
 	void did_hold_note(size_t column, HoldNoteScore hns, bool bright);
 	void set_hold_status(size_t column, TapNote const* tap, bool start, bool end);
 	void set_pressed(size_t column, bool on);
-	void set_note_upcoming(size_t column, double distance);
+	void set_note_upcoming(size_t column, double beat_distance, double second_distance);
 
 	ModManager m_mod_manager;
 	ModifiableTransform m_trans_mod;

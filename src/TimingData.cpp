@@ -14,7 +14,8 @@ static const int INVALID_INDEX = -1;
 
 TimingSegment* GetSegmentAtRow( int iNoteRow, TimingSegmentType tst );
 
-TimingData::TimingData(float fOffset) : m_fBeat0OffsetInSeconds(fOffset)
+TimingData::TimingData(float fOffset)
+	:m_fBeat0OffsetInSeconds(fOffset), m_lookup_requester_count(0)
 {
 }
 
@@ -57,8 +58,13 @@ TimingData::~TimingData()
 
 void TimingData::PrepareLookup()
 {
-	// If multiple players have the same timing data, then adding to the
-	// lookups would probably cause FindEntryInLookup to return the wrong
+	++m_lookup_requester_count;
+	if(m_lookup_requester_count > 1)
+	{
+		return;
+	}
+	// If by some mistake the old lookup table is still hanging around, adding
+	// more entries would probably cause FindEntryInLookup to return the wrong
 	// thing.  So release the lookups. -Kyz
 	ReleaseLookup();
 	const unsigned int segments_per_lookup= 16;
@@ -99,6 +105,11 @@ void TimingData::PrepareLookup()
 
 void TimingData::ReleaseLookup()
 {
+	--m_lookup_requester_count;
+	if(m_lookup_requester_count > 0)
+	{
+		return;
+	}
 	// According to The C++ Programming Language 3rd Ed., decreasing the size
 	// of a vector doesn't actually free the memory it has allocated.  So this
 	// small trick is required to actually free the memory. -Kyz

@@ -123,6 +123,13 @@ public:
 	typedef std::vector<lookup_item_t> beat_start_lookup_t;
 	beat_start_lookup_t m_beat_start_lookup;
 	beat_start_lookup_t m_time_start_lookup;
+	// m_lookup_requester_count exists to track how many things have requested
+	// the lookup tables be prepared, so unrelated parts of code don't have to
+	// check for them.
+	// The lookup tables are only created if m_lookup_requester_count is 0 when
+	// PrepareLookup is called, and only released when it reaches 0 again.
+	// -Kyz
+	int m_lookup_requester_count;
 
 	void PrepareLookup();
 	void ReleaseLookup();

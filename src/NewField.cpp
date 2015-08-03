@@ -531,24 +531,6 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 	return true;
 }
 
-void NewSkinLayer::UpdateInternal(float delta)
-{
-	for(auto&& act : m_frames)
-	{
-		act.Update(delta);
-	}
-	ActorFrame::UpdateInternal(delta);
-}
-
-void NewSkinLayer::DrawPrimitives()
-{
-	for(auto&& act : m_frames)
-	{
-		act.Draw();
-	}
-	ActorFrame::DrawPrimitives();
-}
-
 bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 	std::string& insanity_diagnosis)
 {
@@ -559,7 +541,6 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 	{
 		RETURN_NOT_SANE(ssprintf("Invalid number of columns: %s", insanity_diagnosis.c_str()));
 	}
-	m_frames.resize(num_columns);
 	m_actors.resize(num_columns);
 	for(size_t c= 0; c < num_columns; ++c)
 	{
@@ -578,40 +559,17 @@ bool NewSkinLayer::load_from_lua(lua_State* L, int index, size_t columns,
 		{
 			RETURN_NOT_SANE("Error loading actor.");
 		}
-		// The actors have to be wrapped inside of frames so that mod transforms
-		// can be applied without stomping the rotation the noteskin supplies.
-		m_actors[c].Load(act);
-		m_frames[c].AddChild(m_actors[c]);
+		m_actors[c]= act;
 	}
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	return true;
 }
 
-void NewSkinLayer::transform_columns(vector<transform>& positions)
-{
-	for(size_t c= 0; c < m_frames.size() && c < positions.size(); ++c)
-	{
-		m_frames[c].set_transform(positions[c]);
-	}
-}
-
 NewSkinData::NewSkinData()
 	:m_loaded(false)
 {
 	
-}
-
-bool NewSkinData::load_layer_from_lua(lua_State* L, int index, bool under_notes, size_t columns, std::string& insanity_diagnosis)
-{
-	vector<NewSkinLayer>* container= under_notes ? &m_layers_below_notes : &m_layers_above_notes;
-	container->resize(container->size()+1);
-	if(!container->back().load_from_lua(L, index, columns, insanity_diagnosis))
-	{
-		container->pop_back();
-		return false;
-	}
-	return true;
 }
 
 bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, string const& load_dir, string& insanity_diagnosis)
@@ -879,12 +837,12 @@ bool NewSkinLoader::load_into_data(vector<string> const& button_list,
 	if(!load_layer_set_into_data(L, button_list_index, button_list.size(), m_below_loaders,
 			dest.m_layers_below_notes, sub_sanity))
 	{
-		RETURN_NOT_SANE("Error running below loaders: " + sub_sanity);
+		RETURN_NOT_SANE("Error running layer below loaders: " + sub_sanity);
 	}
 	if(!load_layer_set_into_data(L, button_list_index, button_list.size(), m_above_loaders,
 			dest.m_layers_above_notes, sub_sanity))
 	{
-		RETURN_NOT_SANE("Error running above loaders: " + sub_sanity);
+		RETURN_NOT_SANE("Error running layer above loaders: " + sub_sanity);
 	}
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
@@ -916,7 +874,19 @@ NewFieldColumn::NewFieldColumn()
 NewFieldColumn::~NewFieldColumn()
 {}
 
+void NewFieldColumn::add_heads_from_layers(size_t column,
+	vector<column_head>& heads, vector<NewSkinLayer>& layers)
+{
+	size_t start_head_size= heads.size();
+	heads.resize(start_head_size + layers.size());
+	for(size_t i= 0; i < layers.size(); ++i)
+	{
+		heads[i+start_head_size].load(layers[i].m_actors[column]);
+	}
+}
+
 void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
+	NewSkinData& skin_data,
 	const NoteData* note_data, const TimingData* timing_data, double x)
 {
 	m_column= column;
@@ -926,6 +896,9 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_column_mod.pos_mod.x_mod.get_value().set_value_instant(x);
 	m_use_game_music_beat= true;
 	first_note_visible_prev_frame= m_note_data->end(column);
+
+	add_heads_from_layers(column, m_heads_below_notes, skin_data.m_layers_below_notes);
+	add_heads_from_layers(column, m_heads_above_notes, skin_data.m_layers_above_notes);
 }
 
 void NewFieldColumn::update_displayed_beat(double beat, double second)
@@ -983,6 +956,14 @@ void NewFieldColumn::UpdateInternal(float delta)
 	}
 	m_mod_manager.update(delta);
 	calc_reverse_shift();
+	for(auto&& head : m_heads_below_notes)
+	{
+		head.frame.Update(delta);
+	}
+	for(auto&& head : m_heads_above_notes)
+	{
+		head.frame.Update(delta);
+	}
 	ActorFrame::UpdateInternal(delta);
 }
 
@@ -1437,36 +1418,54 @@ void NewFieldColumn::build_render_lists()
 		}
 	}
 	first_note_visible_prev_frame= first_visible_this_frame;
+
+	set_note_upcoming(m_status.upcoming_beat_dist, m_status.upcoming_second_dist);
+	// The hold status should be updated if there is a currently active hold
+	// or if there was one last frame.
+	if(m_status.active_hold != nullptr || m_status.prev_active_hold != nullptr)
+	{
+		bool curr_is_null= m_status.active_hold == nullptr;
+		bool prev_is_null= m_status.prev_active_hold == nullptr;
+		TapNote const* pass= curr_is_null ? m_status.prev_active_hold : m_status.active_hold;
+		set_hold_status(pass, prev_is_null, curr_is_null);
+	}
 }
 
-void NewFieldColumn::draw_holds()
+void NewFieldColumn::draw_things_in_step(render_step step)
 {
-	if(render_holds.empty())
+#define RETURN_IF_EMPTY(empty_check) if(empty_check) { return; } break;
+	switch(step)
 	{
-		return;
+		case RENDER_BELOW_NOTES:
+			RETURN_IF_EMPTY(m_heads_below_notes.empty());
+		case RENDER_HOLDS:
+			RETURN_IF_EMPTY(render_holds.empty());
+		case RENDER_TAPS:
+			RETURN_IF_EMPTY(render_taps.empty());
+		case RENDER_CHILDREN:
+			RETURN_IF_EMPTY(GetChildrenEmpty());
+		case RENDER_ABOVE_NOTES:
+			RETURN_IF_EMPTY(m_heads_above_notes.empty());
+		default:
+			break;
 	}
-	curr_render_step= RENDER_HOLDS;
+#undef RETURN_IF_EMPTY
+	curr_render_step= step;
 	Draw();
 }
 
-void NewFieldColumn::draw_taps()
+void NewFieldColumn::draw_heads_internal(vector<column_head>& heads)
 {
-	if(render_taps.empty())
+	double const y_offset= apply_reverse_shift(
+		calc_y_offset(m_curr_beat, m_curr_second));;
+	transform trans;
+	calc_transform(m_curr_beat, m_curr_second, trans);
+	trans.pos.y+= y_offset;
+	for(auto&& head : heads)
 	{
-		return;
+		head.frame.set_transform(trans);
+		head.frame.Draw();
 	}
-	curr_render_step= RENDER_TAPS;
-	Draw();
-}
-
-void NewFieldColumn::draw_children()
-{
-	if(GetChildrenEmpty())
-	{
-		return;
-	}
-	curr_render_step= RENDER_CHILDREN;
-	Draw();
 }
 
 void NewFieldColumn::draw_holds_internal()
@@ -1613,10 +1612,74 @@ void NewFieldColumn::draw_taps_internal()
 	}
 }
 
+static Message create_did_message(bool bright)
+{
+	Message msg("ColumnJudgment");
+	msg.SetParam("bright", bright);
+	return msg;
+}
+
+void NewFieldColumn::pass_message_to_heads(Message& msg)
+{
+	for(auto&& head : m_heads_below_notes)
+	{
+		head.actor->HandleMessage(msg);
+	}
+	for(auto&& head : m_heads_above_notes)
+	{
+		head.actor->HandleMessage(msg);
+	}
+}
+
+void NewFieldColumn::did_tap_note(TapNoteScore tns, bool bright)
+{
+	Message msg(create_did_message(bright));
+	msg.SetParam("tap_note_score", tns);
+	pass_message_to_heads(msg);
+}
+
+void NewFieldColumn::did_hold_note(HoldNoteScore hns, bool bright)
+{
+	Message msg(create_did_message(bright));
+	msg.SetParam("hold_note_score", hns);
+	pass_message_to_heads(msg);
+}
+
+void NewFieldColumn::set_hold_status(TapNote const* tap, bool start, bool end)
+{
+	Message msg("Hold");
+	if(tap != nullptr)
+	{
+		msg.SetParam("type", tap->subType);
+		msg.SetParam("life", tap->HoldResult.fLife);
+		msg.SetParam("start", start);
+		msg.SetParam("finished", end);
+	}
+	pass_message_to_heads(msg);
+}
+
+void NewFieldColumn::set_pressed(bool on)
+{
+	Message msg("Pressed");
+	msg.SetParam("on", on);
+	pass_message_to_heads(msg);
+}
+
+void NewFieldColumn::set_note_upcoming(double beat_distance, double second_distance)
+{
+	Message msg("Upcoming");
+	msg.SetParam("beat_distance", beat_distance);
+	msg.SetParam("second_distance", second_distance);
+	pass_message_to_heads(msg);
+}
+
 void NewFieldColumn::DrawPrimitives()
 {
 	switch(curr_render_step)
 	{
+		case RENDER_BELOW_NOTES:
+			draw_heads_internal(m_heads_below_notes);
+			break;
 		case RENDER_HOLDS:
 			draw_holds_internal();
 			break;
@@ -1625,6 +1688,9 @@ void NewFieldColumn::DrawPrimitives()
 			break;
 		case RENDER_CHILDREN:
 			ActorFrame::DrawPrimitives();
+			break;
+		case RENDER_ABOVE_NOTES:
+			draw_heads_internal(m_heads_above_notes);
 			break;
 		default:
 			break;
@@ -1651,7 +1717,6 @@ NewField::~NewField()
 void NewField::UpdateInternal(float delta)
 {
 	m_mod_manager.update(delta);
-	m_newskin.update_all_layers(delta);
 	for(auto&& col : m_columns)
 	{
 		col.Update(delta);
@@ -1676,50 +1741,25 @@ void NewField::PreDraw()
 void NewField::DrawPrimitives()
 {
 	vector<transform> column_trans(m_columns.size());
-	for(size_t c= 0; c < m_columns.size(); ++c)
+	for(auto&& col : m_columns)
 	{
-		m_columns[c].build_render_lists();
-		m_columns[c].calc_transform_for_head(column_trans[c]);
-		set_note_upcoming(c, m_columns[c].m_status.upcoming_beat_dist,
-			m_columns[c].m_status.upcoming_second_dist);
-		// The hold status should be updated if there is a currently active hold
-		// or if there was one last frame.
-		if(m_columns[c].m_status.active_hold != nullptr ||
-			m_columns[c].m_status.prev_active_hold != nullptr)
+		col.build_render_lists();
+	}
+	// Things in columns are drawn in different steps so that the things in a
+	// lower step in one column cannot go over the things in a higher step in
+	// another column.  For example, things below notes (like receptors) cannot
+	// go over notes in another column.  Holds are separated from taps for the
+	// same reason.
+	for(auto step : {NewFieldColumn::RENDER_BELOW_NOTES,
+				NewFieldColumn::RENDER_HOLDS, NewFieldColumn::RENDER_TAPS,
+				NewFieldColumn::RENDER_CHILDREN, NewFieldColumn::RENDER_ABOVE_NOTES})
+	{
+		for(auto&& col : m_columns)
 		{
-			bool curr_is_null= m_columns[c].m_status.active_hold == nullptr;
-			bool prev_is_null= m_columns[c].m_status.prev_active_hold == nullptr;
-			TapNote const* pass= curr_is_null ? m_columns[c].m_status.prev_active_hold : m_columns[c].m_status.active_hold;
-			set_hold_status(c, pass, prev_is_null, curr_is_null);
+			col.draw_things_in_step(step);
 		}
 	}
-	m_newskin.transform_columns(column_trans);
-	draw_layer_set(m_newskin.m_layers_below_notes);
-	// Hold bodies in all columns must be underneath taps.  This way, a hold in
-	// the second column can't obscure a tap in the first if it crosses the
-	// first column.  Same goes for children the theme decides to add.
-	for(size_t c= 0; c < m_columns.size(); ++c)
-	{
-		m_columns[c].draw_holds();
-	}
-	for(size_t c= 0; c < m_columns.size(); ++c)
-	{
-		m_columns[c].draw_taps();
-	}
-	for(size_t c= 0; c < m_columns.size(); ++c)
-	{
-		m_columns[c].draw_children();
-	}
-	draw_layer_set(m_newskin.m_layers_above_notes);
 	ActorFrame::DrawPrimitives();
-}
-
-void NewField::draw_layer_set(std::vector<NewSkinLayer>& layers)
-{
-	for(auto&& lay : layers)
-	{
-		lay.Draw();
-	}
 }
 
 void NewField::push_columns_to_lua(lua_State* L)
@@ -1884,8 +1924,8 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 	// Temporary until styles are removed.
 	for(size_t i= 0; i < m_columns.size(); ++i)
 	{
-		m_columns[i].set_column_info(i, m_newskin.get_column(i), m_note_data,
-			m_timing_data, colinfo[i].fXOffset);
+		m_columns[i].set_column_info(i, m_newskin.get_column(i), m_newskin,
+			m_note_data, m_timing_data, colinfo[i].fXOffset);
 	}
 }
 
@@ -1899,54 +1939,22 @@ void NewField::update_displayed_beat(double beat, double second)
 	}
 }
 
-static Message create_did_message(size_t column, bool bright)
-{
-	Message msg("ColumnJudgment");
-	msg.SetParam("column", column);
-	msg.SetParam("bright", bright);
-	return msg;
-}
-
 void NewField::did_tap_note(size_t column, TapNoteScore tns, bool bright)
 {
-	Message msg(create_did_message(column, bright));
-	msg.SetParam("tap_note_score", tns);
-	m_newskin.pass_message_to_all_layers(column, msg);
+	if(column >= m_columns.size()) { return; }
+	m_columns[column].did_tap_note(tns, bright);
 }
 
 void NewField::did_hold_note(size_t column, HoldNoteScore hns, bool bright)
 {
-	Message msg(create_did_message(column, bright));
-	msg.SetParam("hold_note_score", hns);
-	m_newskin.pass_message_to_all_layers(column, msg);
-}
-
-void NewField::set_hold_status(size_t column, TapNote const* tap, bool start, bool end)
-{
-	Message msg("Hold");
-	if(tap != nullptr)
-	{
-		msg.SetParam("type", tap->subType);
-		msg.SetParam("life", tap->HoldResult.fLife);
-		msg.SetParam("start", start);
-		msg.SetParam("finished", end);
-	}
-	m_newskin.pass_message_to_all_layers(column, msg);
+	if(column >= m_columns.size()) { return; }
+	m_columns[column].did_hold_note(hns, bright);
 }
 
 void NewField::set_pressed(size_t column, bool on)
 {
-	Message msg("Pressed");
-	msg.SetParam("on", on);
-	m_newskin.pass_message_to_all_layers(column, msg);
-}
-
-void NewField::set_note_upcoming(size_t column, double beat_distance, double second_distance)
-{
-	Message msg("Upcoming");
-	msg.SetParam("beat_distance", beat_distance);
-	msg.SetParam("second_distance", second_distance);
-	m_newskin.pass_message_to_all_layers(column, msg);
+	if(column >= m_columns.size()) { return; }
+	m_columns[column].set_pressed(on);
 }
 
 

@@ -10,7 +10,7 @@ return {
 	-- layers_above_notes is the same as layers_below_notes, but its contents
 	-- are rendered after the notes, so they appear on top of the notes.
 	layers_above_notes= {"explosions.lua"},
-	-- Since both all layers are considered the same, messages such as
+	-- Since all layers are considered the same, messages such as
 	-- judgment and step actions are sent to all layers.  This means you can
 	-- make receptors that respond to judgments, or explosions that respond to
 	-- steps, or whatever.

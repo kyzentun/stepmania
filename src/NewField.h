@@ -285,27 +285,12 @@ private:
 	std::vector<double> m_rotations;
 };
 
-struct NewSkinLayer : ActorFrame
+struct NewSkinLayer
 {
-	virtual void UpdateInternal(float delta);
-	virtual void DrawPrimitives();
-
 	bool load_from_lua(lua_State* L, int index, size_t columns, std::string& insanity_diagnosis);
-	void position_columns_to_info(std::vector<double>& positions);
-	void transform_columns(std::vector<transform>& positions);
-	void pass_message_to_column(size_t column, Message const& msg)
-	{
-		if(column < m_actors.size())
-		{
-			m_actors[column]->HandleMessage(msg);
-		}
-	}
-
-private:
-	// The actors have to be wrapped inside of frames so that mod transforms
-	// can be applied without stomping the rotation the noteskin supplies.
-	std::vector<ActorFrame> m_frames;
-	std::vector<AutoActor> m_actors;
+	// The actors are public so that the NewFieldColumns can go through and
+	// take ownership of the actors after loading.
+	std::vector<Actor*> m_actors;
 };
 
 struct NewSkinData
@@ -320,45 +305,11 @@ struct NewSkinData
 		}
 		return &m_columns[column];
 	}
-	bool load_layer_from_lua(lua_State* L, int index, bool under_notes, size_t columns, std::string& insanity_diagnosis);
 	bool load_taps_from_lua(lua_State* L, int index, size_t columns, std::string const& load_dir, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
-	void update_layers(std::vector<NewSkinLayer>& layers, float delta)
-	{
-		for(auto&& lay : layers)
-		{
-			lay.Update(delta);
-		}
-	}
-	void update_all_layers(float delta)
-	{
-		update_layers(m_layers_below_notes, delta);
-		update_layers(m_layers_above_notes, delta);
-	}
-	void pass_message_to_layers(std::vector<NewSkinLayer>& layers, size_t column, Message const& msg)
-	{
-		for(auto&& lay : layers)
-		{
-			lay.pass_message_to_column(column, msg);
-		}
-	}
-	void pass_message_to_all_layers(size_t column, Message const& msg)
-	{
-		pass_message_to_layers(m_layers_below_notes, column, msg);
-		pass_message_to_layers(m_layers_above_notes, column, msg);
-	}
-	void transform_columns(std::vector<transform>& positions)
-	{
-		for(auto&& lay : m_layers_below_notes)
-		{
-			lay.transform_columns(positions);
-		}
-		for(auto&& lay : m_layers_above_notes)
-		{
-			lay.transform_columns(positions);
-		}
-	}
 
+	// The layers are public so that the NewFieldColumns can go through and
+	// take ownership of the actors after loading.
 	std::vector<NewSkinLayer> m_layers_below_notes;
 	std::vector<NewSkinLayer> m_layers_above_notes;
 private:
@@ -401,7 +352,22 @@ struct NewFieldColumn : ActorFrame
 	NewFieldColumn();
 	~NewFieldColumn();
 
+	struct column_head
+	{
+		// The actors have to be wrapped inside of frames so that mod transforms
+		// can be applied without stomping the rotation the noteskin supplies.
+		ActorFrame frame;
+		AutoActor actor;
+		void load(Actor* act)
+		{
+			actor.Load(act);
+			frame.AddChild(actor);
+		}
+	};
+	void add_heads_from_layers(size_t column, std::vector<column_head>& heads,
+		std::vector<NewSkinLayer>& layers);
 	void set_column_info(size_t column, NewSkinColumn* newskin,
+		NewSkinData& skin_data,
 		const NoteData* note_data, const TimingData* timing_data, double x);
 
 	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
@@ -431,27 +397,26 @@ struct NewFieldColumn : ActorFrame
 		return fmodf((beat * mult) + offset, 1.0);
 	}
 	void calc_transform(double beat, double second, transform& trans);
-	void calc_transform_for_head(transform& trans)
-	{
-		double y_offset= calc_y_offset(m_curr_beat, m_curr_second);
-		double render_y= apply_reverse_shift(y_offset);
-		calc_transform(m_curr_beat, m_curr_second, trans);
-		trans.pos.x+= GetX();
-		trans.pos.y+= GetY() + render_y;
-		trans.pos.z+= GetZ();
-		trans.rot.x+= GetRotationX();
-		trans.rot.y+= GetRotationY();
-		trans.rot.z+= GetRotationZ();
-		trans.zoom.x*= GetZoomX() * GetBaseZoomX();
-		trans.zoom.y*= GetZoomY() * GetBaseZoomY();
-		trans.zoom.z*= GetZoomZ() * GetBaseZoomZ();
-	}
 	void calc_reverse_shift();
 	double apply_reverse_shift(double y_offset);
+
+	enum render_step
+	{
+		RENDER_BELOW_NOTES,
+		RENDER_HOLDS,
+		RENDER_TAPS,
+		RENDER_CHILDREN,
+		RENDER_ABOVE_NOTES
+	};
 	void build_render_lists();
-	void draw_holds();
-	void draw_taps();
-	void draw_children();
+	void draw_things_in_step(render_step step);
+
+	void pass_message_to_heads(Message& msg);
+	void did_tap_note(TapNoteScore tns, bool bright);
+	void did_hold_note(HoldNoteScore hns, bool bright);
+	void set_hold_status(TapNote const* tap, bool start, bool end);
+	void set_pressed(bool on);
+	void set_note_upcoming(double beat_distance, double second_distance);
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
@@ -496,6 +461,10 @@ private:
 	double m_pixels_visible_after_beat;
 	size_t m_column;
 	NewSkinColumn* m_newskin;
+
+	std::vector<column_head> m_heads_below_notes;
+	std::vector<column_head> m_heads_above_notes;
+
 	const NoteData* m_note_data;
 	const TimingData* m_timing_data;
 	// Data that needs to be stored for rendering below here.
@@ -503,14 +472,9 @@ private:
 	// rendered in different phases.  All hold bodies must be drawn first, then
 	// all taps, so the taps appear on top of the hold bodies and are not
 	// obscured.
+	void draw_heads_internal(std::vector<column_head>& heads);
 	void draw_holds_internal();
 	void draw_taps_internal();
-	enum render_step
-	{
-		RENDER_HOLDS,
-		RENDER_TAPS,
-		RENDER_CHILDREN
-	};
 	NoteData::TrackMap::const_iterator first_note_visible_prev_frame;
 	std::vector<NoteData::TrackMap::const_iterator> render_holds;
 	std::vector<NoteData::TrackMap::const_iterator> render_taps;
@@ -533,8 +497,6 @@ struct NewField : ActorFrame
 	virtual void PreDraw();
 	virtual void DrawPrimitives();
 
-	void draw_layer_set(std::vector<NewSkinLayer>& layers);
-
 	virtual void PushSelf(lua_State *L);
 	virtual NewField* Copy() const;
 
@@ -548,9 +510,7 @@ struct NewField : ActorFrame
 
 	void did_tap_note(size_t column, TapNoteScore tns, bool bright);
 	void did_hold_note(size_t column, HoldNoteScore hns, bool bright);
-	void set_hold_status(size_t column, TapNote const* tap, bool start, bool end);
 	void set_pressed(size_t column, bool on);
-	void set_note_upcoming(size_t column, double beat_distance, double second_distance);
 
 	ModManager m_mod_manager;
 	ModifiableTransform m_trans_mod;

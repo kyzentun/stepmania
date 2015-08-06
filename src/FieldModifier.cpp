@@ -32,8 +32,11 @@ static const char* ModInputTypeNames[] = {
 XToString(ModInputType);
 LuaXType(ModInputType);
 
-static const char* FieldModifierTypeNames[] = {
+static const char* ModFunctionTypeNames[] = {
 	"Constant",
+	"Product",
+	"Power",
+	"Log",
 	"Sine",
 	"Square",
 	"Triangle",
@@ -41,8 +44,8 @@ static const char* FieldModifierTypeNames[] = {
 	"SawSquare",
 	"SawTriangle",
 };
-XToString(FieldModifierType);
-LuaXType(FieldModifierType);
+XToString(ModFunctionType);
+LuaXType(ModFunctionType);
 
 void ApproachingValue::add_to_update_list()
 {
@@ -107,16 +110,16 @@ struct mod_input_picker
 	}
 };
 
-#define FIELD_MOD_CONSTRUCTOR(name) \
-FieldModifier ## name(ModManager* man, std::vector<mod_input_info>& params) \
+#define MOD_FUNC_CONSTRUCTOR(name) \
+ModFunction ## name(ModManager* man, std::vector<mod_input_info>& params) \
 { \
 	set_manager(man); \
 	set_from_params(params); \
 }
 
-struct FieldModifierConstant : FieldModifier
+struct ModFunctionConstant : ModFunction
 {
-	FIELD_MOD_CONSTRUCTOR(Constant);
+	MOD_FUNC_CONSTRUCTOR(Constant);
 	mod_input_picker value;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
@@ -141,10 +144,118 @@ struct FieldModifierConstant : FieldModifier
 	virtual size_t num_inputs() { return 1; }
 };
 
-struct FieldModifierWave : FieldModifier
+struct ModFunctionProduct : ModFunction
 {
-	FieldModifierWave() {}
-	FIELD_MOD_CONSTRUCTOR(Wave);
+	MOD_FUNC_CONSTRUCTOR(Product);
+	mod_input_picker value;
+	mod_input_picker mult;
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		return value.pick(input) * mult.pick(input);
+	}
+	virtual void set_manager(ModManager* man)
+	{
+		value.set_manager(man);
+		mult.set_manager(man);
+	}
+	virtual void set_from_params(std::vector<mod_input_info>& params)
+	{
+		for(size_t i= 0; i < params.size(); ++i)
+		{
+			switch(i)
+			{
+				case 0: value.set_from_info(params[i]); break;
+				case 1: mult.set_from_info(params[i]); break;
+				default: break;
+			}
+		}
+	}
+	virtual void push_inputs(lua_State* L, int table_index)
+	{
+		value.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 1);
+		mult.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 2);
+	}
+	virtual size_t num_inputs() { return 2; }
+};
+
+struct ModFunctionPower : ModFunction
+{
+	MOD_FUNC_CONSTRUCTOR(Power);
+	mod_input_picker value;
+	mod_input_picker mult;
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		return pow(value.pick(input), mult.pick(input));
+	}
+	virtual void set_manager(ModManager* man)
+	{
+		value.set_manager(man);
+		mult.set_manager(man);
+	}
+	virtual void set_from_params(std::vector<mod_input_info>& params)
+	{
+		for(size_t i= 0; i < params.size(); ++i)
+		{
+			switch(i)
+			{
+				case 0: value.set_from_info(params[i]); break;
+				case 1: mult.set_from_info(params[i]); break;
+				default: break;
+			}
+		}
+	}
+	virtual void push_inputs(lua_State* L, int table_index)
+	{
+		value.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 1);
+		mult.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 2);
+	}
+	virtual size_t num_inputs() { return 2; }
+};
+
+struct ModFunctionLog : ModFunction
+{
+	MOD_FUNC_CONSTRUCTOR(Log);
+	mod_input_picker value;
+	mod_input_picker base;
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		return log(value.pick(input)) / log(base.pick(input));
+	}
+	virtual void set_manager(ModManager* man)
+	{
+		value.set_manager(man);
+		base.set_manager(man);
+	}
+	virtual void set_from_params(std::vector<mod_input_info>& params)
+	{
+		for(size_t i= 0; i < params.size(); ++i)
+		{
+			switch(i)
+			{
+				case 0: value.set_from_info(params[i]); break;
+				case 1: base.set_from_info(params[i]); break;
+				default: break;
+			}
+		}
+	}
+	virtual void push_inputs(lua_State* L, int table_index)
+	{
+		value.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 1);
+		base.scalar.PushSelf(L);
+		lua_rawseti(L, table_index, 2);
+	}
+	virtual size_t num_inputs() { return 2; }
+};
+
+struct ModFunctionWave : ModFunction
+{
+	ModFunctionWave() {}
+	MOD_FUNC_CONSTRUCTOR(Wave);
 	mod_input_picker angle;
 	mod_input_picker phase;
 	mod_input_picker amplitude;
@@ -191,10 +302,10 @@ if(amp == 0.0) \
 	return offset.pick(input); \
 }
 
-struct FieldModifierSine : FieldModifierWave
+struct ModFunctionSine : ModFunctionWave
 {
-	FieldModifierSine() {}
-	FIELD_MOD_CONSTRUCTOR(Sine);
+	ModFunctionSine() {}
+	MOD_FUNC_CONSTRUCTOR(Sine);
 	virtual double eval_internal(double const angle)
 	{
 		return RageFastSin(angle);
@@ -215,10 +326,10 @@ if(wave_result < 0.0) \
 	wave_result+= M_PI * 2.0; \
 }
 
-struct FieldModifierSquare : FieldModifierWave
+struct ModFunctionSquare : ModFunctionWave
 {
-	FieldModifierSquare() {}
-	FIELD_MOD_CONSTRUCTOR(Square);
+	ModFunctionSquare() {}
+	MOD_FUNC_CONSTRUCTOR(Square);
 	virtual double eval_internal(double const angle)
 	{
 		return angle >= M_PI ? -1.0 : 1.0;
@@ -231,10 +342,10 @@ struct FieldModifierSquare : FieldModifierWave
 	}
 };
 
-struct FieldModifierTriangle : FieldModifierWave
+struct ModFunctionTriangle : ModFunctionWave
 {
-	FieldModifierTriangle() {}
-	FIELD_MOD_CONSTRUCTOR(Triangle);
+	ModFunctionTriangle() {}
+	MOD_FUNC_CONSTRUCTOR(Triangle);
 	virtual double eval_internal(double const angle)
 	{
 		double ret= angle * M_1_PI;
@@ -269,9 +380,9 @@ double clip_wave_input_with_saw(double const angle, double const saw_begin,
 }
 
 template<typename wave>
-	struct FieldModifierSaw : wave
+	struct ModFunctionSaw : wave
 {
-	FIELD_MOD_CONSTRUCTOR(Saw);
+	MOD_FUNC_CONSTRUCTOR(Saw);
 	mod_input_picker saw_begin;
 	mod_input_picker saw_end;
 	virtual void set_manager(ModManager* man)
@@ -324,24 +435,30 @@ template<typename wave>
 	}
 };
 
-static FieldModifier* create_field_mod(ModManager* man, FieldModifierType type, vector<mod_input_info>& params)
+static ModFunction* create_field_mod(ModManager* man, ModFunctionType type, vector<mod_input_info>& params)
 {
 	switch(type)
 	{
-		case FMT_Constant:
-			return new FieldModifierConstant(man, params);
-		case FMT_Sine:
-			return new FieldModifierSine(man, params);
-		case FMT_Square:
-			return new FieldModifierSquare(man, params);
-		case FMT_Triangle:
-			return new FieldModifierTriangle(man, params);
-		case FMT_SawSine:
-			return new FieldModifierSaw<FieldModifierSine>(man, params);
-		case FMT_SawSquare:
-			return new FieldModifierSaw<FieldModifierSquare>(man, params);
-		case FMT_SawTriangle:
-			return new FieldModifierSaw<FieldModifierTriangle>(man, params);
+		case MFT_Constant:
+			return new ModFunctionConstant(man, params);
+		case MFT_Product:
+			return new ModFunctionProduct(man, params);
+		case MFT_Power:
+			return new ModFunctionPower(man, params);
+		case MFT_Log:
+			return new ModFunctionLog(man, params);
+		case MFT_Sine:
+			return new ModFunctionSine(man, params);
+		case MFT_Square:
+			return new ModFunctionSquare(man, params);
+		case MFT_Triangle:
+			return new ModFunctionTriangle(man, params);
+		case MFT_SawSine:
+			return new ModFunctionSaw<ModFunctionSine>(man, params);
+		case MFT_SawSquare:
+			return new ModFunctionSaw<ModFunctionSquare>(man, params);
+		case MFT_SawTriangle:
+			return new ModFunctionSaw<ModFunctionTriangle>(man, params);
 		default:
 			return nullptr;
 	}
@@ -368,9 +485,9 @@ double ModifiableValue::evaluate(mod_val_inputs const& input)
 	return sum;
 }
 
-void ModifiableValue::add_mod(FieldModifierType type, std::vector<mod_input_info>& params)
+void ModifiableValue::add_mod(ModFunctionType type, std::vector<mod_input_info>& params)
 {
-	FieldModifier* new_mod= create_field_mod(m_manager, type, params);
+	ModFunction* new_mod= create_field_mod(m_manager, type, params);
 	if(new_mod == nullptr)
 	{
 		LuaHelpers::ReportScriptError("Problem creating modifier: unknown type.");
@@ -379,7 +496,7 @@ void ModifiableValue::add_mod(FieldModifierType type, std::vector<mod_input_info
 	m_mods.push_back(new_mod);
 }
 
-FieldModifier* ModifiableValue::get_mod(size_t index)
+ModFunction* ModifiableValue::get_mod(size_t index)
 {
 	if(index < m_mods.size())
 	{
@@ -440,7 +557,7 @@ struct LunaApproachingValue : Luna<ApproachingValue>
 };
 LUA_REGISTER_CLASS(ApproachingValue);
 
-struct LunaFieldModifier : Luna<FieldModifier>
+struct LunaModFunction : Luna<ModFunction>
 {
 	static int get_inputs(T* p, lua_State* L)
 	{
@@ -448,18 +565,18 @@ struct LunaFieldModifier : Luna<FieldModifier>
 		p->push_inputs(L, lua_gettop(L));
 		return 1;
 	}
-	LunaFieldModifier()
+	LunaModFunction()
 	{
 		ADD_METHOD(get_inputs);
 	}
 };
-LUA_REGISTER_CLASS(FieldModifier);
+LUA_REGISTER_CLASS(ModFunction);
 
 struct LunaModifiableValue : Luna<ModifiableValue>
 {
 	static int add_mod(T* p, lua_State* L)
 	{
-		FieldModifierType type= Enum::Check<FieldModifierType>(L, 1);
+		ModFunctionType type= Enum::Check<ModFunctionType>(L, 1);
 		vector<mod_input_info> params;
 		if(lua_istable(L, 2))
 		{
@@ -491,7 +608,7 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 	}
 	static int get_mod(T* p, lua_State* L)
 	{
-		FieldModifier* mod= p->get_mod(static_cast<size_t>(IArg(1)));
+		ModFunction* mod= p->get_mod(static_cast<size_t>(IArg(1)));
 		if(mod == nullptr)
 		{
 			lua_pushnil(L);

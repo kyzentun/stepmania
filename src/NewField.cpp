@@ -1319,10 +1319,11 @@ void NewFieldColumn::update_active_hold(TapNote const& tap)
 
 void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second)
 {
-	double const last_held= tap.HoldResult.GetLastHeldBeat();
-	if(last_held > hold_beat)
+	double const last_held_beat= tap.HoldResult.GetLastHeldBeat();
+	double const last_held_second= tap.HoldResult.last_held_second;
+	if(last_held_second > tap.occurs_at_second)
 	{
-		if(fabs(last_held - m_curr_beat) < .01)
+		if(fabs(last_held_second - m_curr_second) < .01)
 		{
 			beat= m_curr_beat;
 			second= m_curr_second;
@@ -1330,8 +1331,8 @@ void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_be
 		}
 		// TODO: Figure out whether this does the wrong thing for holds that are
 		// released during a stop.
-		beat= last_held;
-		second= tap.HoldResult.last_held_second;
+		beat= last_held_beat;
+		second= last_held_second;
 		return;
 	}
 	beat= hold_beat;

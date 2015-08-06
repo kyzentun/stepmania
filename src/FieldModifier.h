@@ -145,15 +145,15 @@ struct mod_input_info
 	double scalar;
 };
 
-struct FieldModifier
+struct ModFunction
 {
-	FieldModifier() {}
-	FieldModifier(ModManager* man, std::vector<mod_input_info>& params)
+	ModFunction() {}
+	ModFunction(ModManager* man, std::vector<mod_input_info>& params)
 	{
 		set_manager(man);
 		set_from_params(params);
 	}
-	virtual ~FieldModifier() {}
+	virtual ~ModFunction() {}
 	virtual void update(double delta) { UNUSED(delta); }
 	virtual double evaluate(mod_val_inputs const& input)
 	{
@@ -174,20 +174,23 @@ struct FieldModifier
 	virtual void PushSelf(lua_State* L);
 };
 
-enum FieldModifierType
+enum ModFunctionType
 {
-	FMT_Constant,
-	FMT_Sine,
-	FMT_Square,
-	FMT_Triangle,
-	FMT_SawSine,
-	FMT_SawSquare,
-	FMT_SawTriangle,
-	NUM_FieldModifierType,
-	FieldModifierType_Invalid
+	MFT_Constant,
+	MFT_Product,
+	MFT_Power,
+	MFT_Log,
+	MFT_Sine,
+	MFT_Square,
+	MFT_Triangle,
+	MFT_SawSine,
+	MFT_SawSquare,
+	MFT_SawTriangle,
+	NUM_ModFunctionType,
+	ModFunctionType_Invalid
 };
-const RString& FieldModifierTypeToString(FieldModifierType fmt);
-LuaDeclareType(FieldModifierType);
+const RString& ModFunctionTypeToString(ModFunctionType fmt);
+LuaDeclareType(ModFunctionType);
 
 struct ModifiableValue
 {
@@ -200,8 +203,8 @@ struct ModifiableValue
 	~ModifiableValue();
 	void set_manager(ModManager* man);
 	double evaluate(mod_val_inputs const& input);
-	void add_mod(FieldModifierType type, std::vector<mod_input_info>& params);
-	FieldModifier* get_mod(size_t index);
+	void add_mod(ModFunctionType type, std::vector<mod_input_info>& params);
+	ModFunction* get_mod(size_t index);
 	size_t num_mods() { return m_mods.size(); }
 	void remove_mod(size_t index);
 	void clear_mods();
@@ -212,7 +215,7 @@ struct ModifiableValue
 private:
 	ModManager* m_manager;
 	ApproachingValue m_value;
-	std::vector<FieldModifier*> m_mods;
+	std::vector<ModFunction*> m_mods;
 };
 
 struct ModifiableVector3

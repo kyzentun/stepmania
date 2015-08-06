@@ -7,7 +7,7 @@
 
 #include "ActorFrame.h"
 #include "AutoActor.h"
-#include "FieldModifier.h"
+#include "ModValue.h"
 #include "NoteData.h"
 #include "RageTexture.h"
 

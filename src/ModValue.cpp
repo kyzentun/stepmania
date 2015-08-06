@@ -1,6 +1,6 @@
 #include "global.h"
 #include "EnumHelper.h"
-#include "FieldModifier.h"
+#include "ModValue.h"
 #include "RageLog.h"
 #include "RageMath.h"
 #include "LuaBinding.h"

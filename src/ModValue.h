@@ -1,5 +1,5 @@
-#ifndef FIELD_MODIFIER_H
-#define FIELD_MODIFIER_H
+#ifndef MOD_VALUE_H
+#define MOD_VALUE_H
 
 #include <string>
 #include <unordered_set>

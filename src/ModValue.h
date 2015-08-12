@@ -1,6 +1,7 @@
 #ifndef MOD_VALUE_H
 #define MOD_VALUE_H
 
+#include <initializer_list>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
@@ -139,11 +140,92 @@ LuaDeclareType(ModInputType);
 struct mod_input_info
 {
 	mod_input_info()
-		:type(MIT_Scalar), scalar(0.0)
+		:type(MIT_Scalar), scalar(0.0), offset(0.0)
 	{}
 	ModInputType type;
 	double scalar;
+	double offset;
 };
+
+struct mod_input_picker
+{
+	ModInputType type;
+	ApproachingValue scalar;
+	ApproachingValue offset;
+	mod_input_picker()
+		:type(MIT_Scalar), scalar(0.0), offset(0.0)
+	{}
+	void set_from_info(mod_input_info& info)
+	{
+		type= info.type;
+		scalar.set_value_instant(info.scalar);
+		offset.set_value_instant(info.offset);
+	}
+	double pick(mod_val_inputs const& input)
+	{
+		double ret= 1.0;
+		switch(type)
+		{
+			case MIT_EvalBeat:
+				ret= input.eval_beat;
+				break;
+			case MIT_EvalSecond:
+				ret= input.eval_second;
+				break;
+			case MIT_MusicBeat:
+				ret= input.music_beat;
+				break;
+			case MIT_MusicSecond:
+				ret= input.music_second;
+				break;
+			case MIT_DistBeat:
+				ret= input.eval_beat - input.music_beat;
+				break;
+			case MIT_DistSecond:
+				ret= input.eval_second - input.music_second;
+				break;
+			case MIT_Scalar:
+			default:
+				break;
+		}
+		return (ret * scalar.get_value()) + offset.get_value();
+	}
+	void set_manager(ModManager* man)
+	{
+		scalar.set_manager(man);
+		offset.set_manager(man);
+	}
+	void push(lua_State* L, bool with_offset)
+	{
+		if(with_offset)
+		{
+			lua_createtable(L, 2, 0);
+			scalar.PushSelf(L);
+			lua_rawseti(L, -2, 1);
+			offset.PushSelf(L);
+			lua_rawseti(L, -2, 2);
+		}
+		else
+		{
+			scalar.PushSelf(L);
+		}
+	}
+};
+
+enum ModFunctionType
+{
+	MFT_Constant,
+	MFT_Product,
+	MFT_Power,
+	MFT_Log,
+	MFT_Sine,
+	MFT_Square,
+	MFT_Triangle,
+	NUM_ModFunctionType,
+	ModFunctionType_Invalid
+};
+const RString& ModFunctionTypeToString(ModFunctionType fmt);
+LuaDeclareType(ModFunctionType);
 
 struct ModFunction
 {
@@ -165,32 +247,81 @@ struct ModFunction
 	{
 		UNUSED(params);
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
 		UNUSED(L);
 		UNUSED(table_index);
+		UNUSED(with_offsets);
+	}
+	void push_saw(lua_State* L, int table_index, bool with_offsets)
+	{
+		push_inputs_internal(L, table_index, with_offsets,
+			{&m_saw_begin, &m_saw_end});
+	}
+	void push_gap(lua_State* L, int table_index, bool with_offsets)
+	{
+		push_inputs_internal(L, table_index, with_offsets,
+			{&m_gap_begin, &m_gap_end, &m_gap_value});
 	}
 	virtual size_t num_inputs() { return 0; }
 	virtual void PushSelf(lua_State* L);
-};
 
-enum ModFunctionType
-{
-	MFT_Constant,
-	MFT_Product,
-	MFT_Power,
-	MFT_Log,
-	MFT_Sine,
-	MFT_Square,
-	MFT_Triangle,
-	MFT_SawSine,
-	MFT_SawSquare,
-	MFT_SawTriangle,
-	NUM_ModFunctionType,
-	ModFunctionType_Invalid
+	bool m_saw_enabled;
+	bool m_gap_enabled;
+protected:
+	void push_inputs_internal(lua_State* L, int table_index, bool with_offsets,
+		std::initializer_list<mod_input_picker*> inputs)
+	{
+		size_t i= 1;
+		for(auto&& input : inputs)
+		{
+			input->push(L, with_offsets);
+			lua_rawseti(L, table_index, i);
+			++i;
+		}
+	}
+	double apply_saw(double result, mod_val_inputs const& input)
+	{
+		if(!m_saw_enabled)
+		{
+			return result;
+		}
+		double const saw_begin= m_saw_begin.pick(input);
+		double const saw_end= m_saw_end.pick(input);
+		double const dist= saw_end - saw_begin;
+		double const mod_res= fmod(result, dist);
+		if(mod_res < 0.0)
+		{
+			return mod_res + dist + saw_begin;
+		}
+		return mod_res + saw_begin;
+	}
+	double apply_gap(double result, mod_val_inputs const& input)
+	{
+		if(!m_gap_enabled)
+		{
+			return result;
+		}
+		double const gap_begin= m_gap_begin.pick(input);
+		if(result < gap_begin)
+		{
+			return result;
+		}
+		double const gap_end= m_gap_end.pick(input);
+		double const dist= gap_end - gap_begin;
+		if(result >= gap_end)
+		{
+			return result - dist;
+		}
+		return m_gap_value.pick(input);
+	}
+
+	mod_input_picker m_saw_begin;
+	mod_input_picker m_saw_end;
+	mod_input_picker m_gap_begin;
+	mod_input_picker m_gap_end;
+	mod_input_picker m_gap_value;
 };
-const RString& ModFunctionTypeToString(ModFunctionType fmt);
-LuaDeclareType(ModFunctionType);
 
 struct ModifiableValue
 {

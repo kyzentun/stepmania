@@ -40,9 +40,6 @@ static const char* ModFunctionTypeNames[] = {
 	"Sine",
 	"Square",
 	"Triangle",
-	"SawSine",
-	"SawSquare",
-	"SawTriangle",
 };
 XToString(ModFunctionType);
 LuaXType(ModFunctionType);
@@ -63,53 +60,6 @@ void ApproachingValue::remove_from_update_list()
 }
 
 
-struct mod_input_picker
-{
-	ModInputType type;
-	ApproachingValue scalar;
-	mod_input_picker()
-		:type(MIT_Scalar), scalar(0.0)
-	{}
-	void set_from_info(mod_input_info& info)
-	{
-		type= info.type;
-		scalar.set_value_instant(info.scalar);
-	}
-	double pick(mod_val_inputs const& input)
-	{
-		double ret= 1.0;
-		switch(type)
-		{
-			case MIT_EvalBeat:
-				ret= input.eval_beat;
-				break;
-			case MIT_EvalSecond:
-				ret= input.eval_second;
-				break;
-			case MIT_MusicBeat:
-				ret= input.music_beat;
-				break;
-			case MIT_MusicSecond:
-				ret= input.music_second;
-				break;
-			case MIT_DistBeat:
-				ret= input.eval_beat - input.music_beat;
-				break;
-			case MIT_DistSecond:
-				ret= input.eval_second - input.music_second;
-				break;
-			case MIT_Scalar:
-			default:
-				break;
-		}
-		return ret * scalar.get_value();
-	}
-	void set_manager(ModManager* man)
-	{
-		scalar.set_manager(man);
-	}
-};
-
 #define MOD_FUNC_CONSTRUCTOR(name) \
 ModFunction ## name(ModManager* man, std::vector<mod_input_info>& params) \
 { \
@@ -123,7 +73,7 @@ struct ModFunctionConstant : ModFunction
 	mod_input_picker value;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return value.pick(input);
+		return apply_gap(apply_saw(value.pick(input), input), input);
 	}
 	virtual void set_manager(ModManager* man)
 	{
@@ -136,10 +86,9 @@ struct ModFunctionConstant : ModFunction
 			value.set_from_info(params[0]);
 		}
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
-		value.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 1);
+		push_inputs_internal(L, table_index, with_offsets, {&value});
 	}
 	virtual size_t num_inputs() { return 1; }
 };
@@ -151,7 +100,8 @@ struct ModFunctionProduct : ModFunction
 	mod_input_picker mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return value.pick(input) * mult.pick(input);
+		return apply_gap(apply_saw(value.pick(input), input), input) *
+			mult.pick(input);
 	}
 	virtual void set_manager(ModManager* man)
 	{
@@ -170,12 +120,9 @@ struct ModFunctionProduct : ModFunction
 			}
 		}
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
-		value.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 1);
-		mult.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 2);
+		push_inputs_internal(L, table_index, with_offsets, {&value, &mult});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -187,7 +134,8 @@ struct ModFunctionPower : ModFunction
 	mod_input_picker mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return pow(value.pick(input), mult.pick(input));
+		return pow(apply_gap(apply_saw(value.pick(input), input), input),
+			mult.pick(input));
 	}
 	virtual void set_manager(ModManager* man)
 	{
@@ -206,12 +154,9 @@ struct ModFunctionPower : ModFunction
 			}
 		}
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
-		value.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 1);
-		mult.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 2);
+		push_inputs_internal(L, table_index, with_offsets, {&value, &mult});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -223,7 +168,8 @@ struct ModFunctionLog : ModFunction
 	mod_input_picker base;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return log(value.pick(input)) / log(base.pick(input));
+		return log(apply_gap(apply_saw(value.pick(input), input), input)) /
+			log(base.pick(input));
 	}
 	virtual void set_manager(ModManager* man)
 	{
@@ -242,12 +188,9 @@ struct ModFunctionLog : ModFunction
 			}
 		}
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
-		value.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 1);
-		base.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 2);
+		push_inputs_internal(L, table_index, with_offsets, {&value, &base});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -260,6 +203,27 @@ struct ModFunctionWave : ModFunction
 	mod_input_picker phase;
 	mod_input_picker amplitude;
 	mod_input_picker offset;
+	virtual double evaluate(mod_val_inputs const& input)
+	{
+		double amp= amplitude.pick(input);
+		if(amp == 0.0)
+		{
+			return offset.pick(input);
+		}
+		double angle_res= apply_gap(apply_saw(angle.pick(input) +
+				phase.pick(input), input), input);
+		angle_res= fmod(angle_res, M_PI * 2.0);
+		if(angle_res < 0.0)
+		{
+			angle_res+= M_PI * 2.0;
+		}
+		double const wave_res= eval_internal(angle_res);
+		return (wave_res * amp) + offset.pick(input);
+	}
+	virtual double eval_internal(double const angle)
+	{
+		return angle;
+	}
 	virtual void set_manager(ModManager* man)
 	{
 		angle.set_manager(man);
@@ -281,26 +245,13 @@ struct ModFunctionWave : ModFunction
 			}
 		}
 	}
-	virtual void push_inputs(lua_State* L, int table_index)
+	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
 	{
-		angle.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 1);
-		phase.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 2);
-		amplitude.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 3);
-		offset.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 4);
+		push_inputs_internal(L, table_index, with_offsets,
+			{&angle, &phase, &amplitude, &offset});
 	}
 	virtual size_t num_inputs() { return 4; }
 };
-
-#define ZERO_AMP_RETURN_EARLY \
-double amp= amplitude.pick(input); \
-if(amp == 0.0) \
-{ \
-	return offset.pick(input); \
-}
 
 struct ModFunctionSine : ModFunctionWave
 {
@@ -310,21 +261,7 @@ struct ModFunctionSine : ModFunctionWave
 	{
 		return RageFastSin(angle);
 	}
-	virtual double evaluate(mod_val_inputs const& input)
-	{
-		ZERO_AMP_RETURN_EARLY;
-		return (eval_internal(angle.pick(input) + phase.pick(input)) * amp)
-			+ offset.pick(input);
-	}
 };
-
-#define WAVE_INPUT \
-double wave_input= angle.pick(input) + phase.pick(input); \
-double wave_result= fmod(wave_input, M_PI * 2.0); \
-if(wave_result < 0.0) \
-{ \
-	wave_result+= M_PI * 2.0; \
-}
 
 struct ModFunctionSquare : ModFunctionWave
 {
@@ -333,12 +270,6 @@ struct ModFunctionSquare : ModFunctionWave
 	virtual double eval_internal(double const angle)
 	{
 		return angle >= M_PI ? -1.0 : 1.0;
-	}
-	virtual double evaluate(mod_val_inputs const& input)
-	{
-		ZERO_AMP_RETURN_EARLY;
-		WAVE_INPUT;
-		return eval_internal(wave_result) * amp + offset.pick(input);
 	}
 };
 
@@ -358,80 +289,6 @@ struct ModFunctionTriangle : ModFunctionWave
 			return 1.0 - ((ret - .5) * 2.0);
 		}
 		return -4.0 + (ret * 2.0);
-	}
-	virtual double evaluate(mod_val_inputs const& input)
-	{
-		ZERO_AMP_RETURN_EARLY;
-		WAVE_INPUT;
-		return (eval_internal(wave_result) * amp) + offset.pick(input);
-	}
-};
-
-double clip_wave_input_with_saw(double const angle, double const saw_begin,
-	double const saw_end)
-{
-	double const dist= saw_end - saw_begin;
-	double const mod_res= fmod(angle, dist);
-	if(mod_res < 0.0)
-	{
-		return mod_res + dist + saw_begin;
-	}
-	return mod_res + saw_begin;
-}
-
-template<typename wave>
-	struct ModFunctionSaw : wave
-{
-	MOD_FUNC_CONSTRUCTOR(Saw);
-	mod_input_picker saw_begin;
-	mod_input_picker saw_end;
-	virtual void set_manager(ModManager* man)
-	{
-		wave::set_manager(man);
-		saw_begin.set_manager(man);
-		saw_end.set_manager(man);
-	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
-	{
-		for(size_t i= 0; i < params.size(); ++i)
-		{
-			switch(i)
-			{
-				case 0: wave::angle.set_from_info(params[i]); break;
-				case 1: wave::phase.set_from_info(params[i]); break;
-				case 2: wave::amplitude.set_from_info(params[i]); break;
-				case 3: wave::offset.set_from_info(params[i]); break;
-				case 4: saw_begin.set_from_info(params[i]); break;
-				case 5: saw_end.set_from_info(params[i]); break;
-				default: break;
-			}
-		}
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		wave::push_inputs(L, table_index);
-		saw_begin.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 5);
-		saw_end.scalar.PushSelf(L);
-		lua_rawseti(L, table_index, 6);
-	}
-	virtual size_t num_inputs() { return 6; }
-	virtual double evaluate(mod_val_inputs const& input)
-	{
-		double amp= wave::amplitude.pick(input);
-		if(amp == 0.0)
-		{
-			return wave::offset.pick(input);
-		}
-		double wave_input= wave::angle.pick(input) + wave::phase.pick(input);
-		double wave_result= fmod(wave_input, M_PI * 2.0);
-		if(wave_result < 0.0)
-		{
-			wave_result+= M_PI * 2.0;
-		}
-		wave_result= clip_wave_input_with_saw(wave_result,
-			saw_begin.pick(input), saw_end.pick(input));
-		return (wave::eval_internal(wave_result) * amp) + wave::offset.pick(input);;
 	}
 };
 
@@ -453,12 +310,6 @@ static ModFunction* create_field_mod(ModManager* man, ModFunctionType type, vect
 			return new ModFunctionSquare(man, params);
 		case MFT_Triangle:
 			return new ModFunctionTriangle(man, params);
-		case MFT_SawSine:
-			return new ModFunctionSaw<ModFunctionSine>(man, params);
-		case MFT_SawSquare:
-			return new ModFunctionSaw<ModFunctionSquare>(man, params);
-		case MFT_SawTriangle:
-			return new ModFunctionSaw<ModFunctionTriangle>(man, params);
 		default:
 			return nullptr;
 	}
@@ -561,8 +412,9 @@ struct LunaModFunction : Luna<ModFunction>
 {
 	static int get_inputs(T* p, lua_State* L)
 	{
+		bool with_offsets= lua_toboolean(L, 1);
 		lua_createtable(L, p->num_inputs(), 0);
-		p->push_inputs(L, lua_gettop(L));
+		p->push_inputs(L, lua_gettop(L), with_offsets);
 		return 1;
 	}
 	LunaModFunction()
@@ -595,8 +447,13 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 					lua_rawgeti(L, -1, 1);
 					info.type= Enum::Check<ModInputType>(L, -1);
 					lua_pop(L, 1);
+					// The use of lua_tonumber is deliberate.  If the scalar or offset
+					// value does not exist, lua_tonumber will return 0.
 					lua_rawgeti(L, -1, 2);
 					info.scalar= lua_tonumber(L, -1);
+					lua_pop(L, 1);
+					lua_rawgeti(L, -1, 3);
+					info.offset= lua_tonumber(L, -1);
 					lua_pop(L, 1);
 				}
 				lua_pop(L, 1);

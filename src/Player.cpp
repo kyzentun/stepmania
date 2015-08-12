@@ -665,6 +665,11 @@ void Player::Load()
 	m_iFirstUncrossedRow     = iNoteRow - 1;
 	m_pJudgedRows->Reset( iNoteRow );
 
+	if(m_new_field != nullptr)
+	{
+		m_new_field->set_skin(m_pPlayerState->m_PlayerOptions.GetPreferred().m_newskin);
+	}
+
 	// TODO: Remove use of PlayerNumber.
 	PlayerNumber pn = m_pPlayerState->m_PlayerNumber;
 

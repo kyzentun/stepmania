@@ -57,14 +57,13 @@ struct NewFieldColumn : ActorFrame
 		return y_offset_visible(calc_y_offset(beat, note.occurs_at_second));
 	}
 	double calc_y_offset(double beat, double second);
-	double quantization_for_time(double beat, double second)
+	double quantization_for_time(mod_val_inputs& input)
 	{
-		mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 		double mult= m_quantization_multiplier.evaluate(input);
 		double offset= m_quantization_offset.evaluate(input);
-		return fmodf((beat * mult) + offset, 1.0);
+		return fmodf((input.eval_beat * mult) + offset, 1.0);
 	}
-	void calc_transform(double beat, double second, transform& trans);
+	void calc_transform(mod_val_inputs& input, transform& trans);
 	void calc_reverse_shift();
 	double apply_reverse_shift(double y_offset);
 

@@ -114,11 +114,15 @@ struct mod_val_inputs
 	double const eval_second;
 	double const music_beat;
 	double const music_second;
+	double const y_offset;
 	mod_val_inputs(double const mb, double const ms)
-		:eval_beat(mb), eval_second(ms), music_beat(mb), music_second(ms)
+		:eval_beat(mb), eval_second(ms), music_beat(mb), music_second(ms), y_offset(0.0)
 	{}
 	mod_val_inputs(double const eb, double const es, double const mb, double const ms)
-		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms)
+		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms), y_offset(0.0)
+	{}
+	mod_val_inputs(double const eb, double const es, double const mb, double const ms, double const yoff)
+		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms), y_offset(yoff)
 	{}
 };
 
@@ -131,6 +135,7 @@ enum ModInputType
 	MIT_MusicSecond,
 	MIT_DistBeat,
 	MIT_DistSecond,
+	MIT_YOffset,
 	NUM_ModInputType,
 	ModInputType_Invalid
 };
@@ -248,6 +253,9 @@ struct ModInput
 				break;
 			case MIT_DistSecond:
 				ret= input.eval_second - input.music_second;
+				break;
+			case MIT_YOffset:
+				ret= input.y_offset;
 				break;
 			case MIT_Scalar:
 			default:

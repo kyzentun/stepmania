@@ -137,34 +137,99 @@ enum ModInputType
 const RString& ModInputTypeToString(ModInputType fmt);
 LuaDeclareType(ModInputType);
 
-struct mod_input_info
+struct ModInput
 {
-	mod_input_info()
-		:type(MIT_Scalar), scalar(0.0), offset(0.0)
-	{}
-	ModInputType type;
-	double scalar;
-	double offset;
-};
+	ModInputType m_type;
+	ApproachingValue m_scalar;
+	ApproachingValue m_offset;
 
-struct mod_input_picker
-{
-	ModInputType type;
-	ApproachingValue scalar;
-	ApproachingValue offset;
-	mod_input_picker()
-		:type(MIT_Scalar), scalar(0.0), offset(0.0)
+	// The input value can be passed through a couple of modifiers to change
+	// its range.  These modifiers are applied before the scalar and offset.
+	// So it works like this:
+	//   result= apply_rep_mod(input)
+	//   result= apply_unce_mod(result)
+	//   return (result * scalar) + offset
+	// These input modifiers are necessary for mods like beat and hidden,
+
+	// The rep modifier makes a sub-range repeat.  rep_begin is the beginning
+	// of the range, rep_end is the end.  The result of the rep modifier will
+	// never equal rep_end.
+	// Example:
+	//   rep_begin is 1.
+	//   rep_end is 2.
+	//     input is 2, result is 1.
+	//     input is .25, result is 1.25.
+	//     input is -.25, result is 1.75.
+	bool m_rep_enabled;
+	ApproachingValue m_rep_begin;
+	ApproachingValue m_rep_end;
+	// The unce modifier. (I could not think of a name.  Send suggestions)
+	// If input is less than unce_begin, it returns unce_before.
+	// If input is equal to or greater than unce_begin and less than unce_end,
+	//   it returns (input - unce_begin) * unce_during.
+	// If input is equal to or greater than unce_end, it returns unce_after.
+	// Example:
+	//   unce_before is 0.
+	//   unce_begin is 1.
+	//   unce_during is 2.
+	//   unce_end is 2.
+	//   unce_after is 3.
+	//     input is .9, result is 0 (unce_before)
+	//     input is 1.1, result is .2 (1.1 minus 1 is .1, .1 times 2 is .2)
+	//     input is 1.9, result is 1.8
+	//     input is 2, result is 3.
+	bool m_unce_enabled;
+	ApproachingValue m_unce_before;
+	ApproachingValue m_unce_begin;
+	ApproachingValue m_unce_during;
+	ApproachingValue m_unce_end;
+	ApproachingValue m_unce_after;
+
+	ModInput()
+		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0), m_rep_enabled(false),
+		m_rep_begin(0.0), m_rep_end(0.0), m_unce_enabled(false),
+		m_unce_before(0.0), m_unce_begin(0.0), m_unce_during(0.0),
+		m_unce_end(0.0), m_unce_after(0.0)
 	{}
-	void set_from_info(mod_input_info& info)
+	void clear();
+	void load_from_lua(lua_State* L, int index);
+	double apply_rep(double input)
 	{
-		type= info.type;
-		scalar.set_value_instant(info.scalar);
-		offset.set_value_instant(info.offset);
+		if(!m_rep_enabled)
+		{
+			return input;
+		}
+		double const rep_begin= m_rep_begin.get_value();
+		double const rep_end= m_rep_end.get_value();
+		double const dist= rep_end - rep_begin;
+		double const mod_res= fmod(input, dist);
+		if(mod_res < 0.0)
+		{
+			return mod_res + dist + rep_begin;
+		}
+		return mod_res + rep_begin;
+	}
+	double apply_unce(double input)
+	{
+		if(!m_unce_enabled)
+		{
+			return input;
+		}
+		double const unce_begin= m_unce_begin.get_value();
+		if(input < unce_begin)
+		{
+			return m_unce_before.get_value();
+		}
+		if(input < m_unce_end.get_value())
+		{
+			return (input - unce_begin) * m_unce_during.get_value();
+		}
+		return m_unce_after.get_value();
 	}
 	double pick(mod_val_inputs const& input)
 	{
 		double ret= 1.0;
-		switch(type)
+		switch(m_type)
 		{
 			case MIT_EvalBeat:
 				ret= input.eval_beat;
@@ -188,28 +253,22 @@ struct mod_input_picker
 			default:
 				break;
 		}
-		return (ret * scalar.get_value()) + offset.get_value();
+		ret= apply_unce(apply_rep(ret));
+		return (ret * m_scalar.get_value()) + m_offset.get_value();
 	}
 	void set_manager(ModManager* man)
 	{
-		scalar.set_manager(man);
-		offset.set_manager(man);
+		m_scalar.set_manager(man);
+		m_offset.set_manager(man);
+		m_rep_begin.set_manager(man);
+		m_rep_end.set_manager(man);
+		m_unce_before.set_manager(man);
+		m_unce_begin.set_manager(man);
+		m_unce_during.set_manager(man);
+		m_unce_end.set_manager(man);
+		m_unce_after.set_manager(man);
 	}
-	void push(lua_State* L, bool with_offset)
-	{
-		if(with_offset)
-		{
-			lua_createtable(L, 2, 0);
-			scalar.PushSelf(L);
-			lua_rawseti(L, -2, 1);
-			offset.PushSelf(L);
-			lua_rawseti(L, -2, 2);
-		}
-		else
-		{
-			scalar.PushSelf(L);
-		}
-	}
+	virtual void PushSelf(lua_State* L);
 };
 
 enum ModFunctionType
@@ -230,10 +289,9 @@ LuaDeclareType(ModFunctionType);
 struct ModFunction
 {
 	ModFunction() {}
-	ModFunction(ModManager* man, std::vector<mod_input_info>& params)
+	ModFunction(ModManager* man)
 	{
 		set_manager(man);
-		set_from_params(params);
 	}
 	virtual ~ModFunction() {}
 	virtual void update(double delta) { UNUSED(delta); }
@@ -243,84 +301,47 @@ struct ModFunction
 		return 0.0;
 	}
 	virtual void set_manager(ModManager* man) { UNUSED(man); }
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		UNUSED(params);
+		UNUSED(L);
+		UNUSED(index);
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
 		UNUSED(L);
 		UNUSED(table_index);
-		UNUSED(with_offsets);
-	}
-	void push_saw(lua_State* L, int table_index, bool with_offsets)
-	{
-		push_inputs_internal(L, table_index, with_offsets,
-			{&m_saw_begin, &m_saw_end});
-	}
-	void push_gap(lua_State* L, int table_index, bool with_offsets)
-	{
-		push_inputs_internal(L, table_index, with_offsets,
-			{&m_gap_begin, &m_gap_end, &m_gap_value});
 	}
 	virtual size_t num_inputs() { return 0; }
 	virtual void PushSelf(lua_State* L);
 
-	bool m_saw_enabled;
-	bool m_gap_enabled;
 protected:
-	void push_inputs_internal(lua_State* L, int table_index, bool with_offsets,
-		std::initializer_list<mod_input_picker*> inputs)
+	void push_inputs_internal(lua_State* L, int table_index,
+		std::initializer_list<ModInput*> inputs)
 	{
 		size_t i= 1;
 		for(auto&& input : inputs)
 		{
-			input->push(L, with_offsets);
+			input->PushSelf(L);
 			lua_rawseti(L, table_index, i);
 			++i;
 		}
 	}
-	double apply_saw(double result, mod_val_inputs const& input)
+	void load_inputs_from_lua(lua_State* L, int index,
+		std::vector<ModInput*> inputs)
 	{
-		if(!m_saw_enabled)
+		// The lua table looks like this:
+		// {type, input, ...}
+		// The ... is for the inputs after the first.
+		// So the first input is at lua table index 2.
+		size_t elements= lua_objlen(L, index);
+		size_t limit= std::min(elements, inputs.size()+2);
+		for(size_t el= 2; el <= limit; ++el)
 		{
-			return result;
+			lua_rawgeti(L, index, el);
+			inputs[el-2]->load_from_lua(L, lua_gettop(L));
+			lua_pop(L, 1);
 		}
-		double const saw_begin= m_saw_begin.pick(input);
-		double const saw_end= m_saw_end.pick(input);
-		double const dist= saw_end - saw_begin;
-		double const mod_res= fmod(result, dist);
-		if(mod_res < 0.0)
-		{
-			return mod_res + dist + saw_begin;
-		}
-		return mod_res + saw_begin;
 	}
-	double apply_gap(double result, mod_val_inputs const& input)
-	{
-		if(!m_gap_enabled)
-		{
-			return result;
-		}
-		double const gap_begin= m_gap_begin.pick(input);
-		if(result < gap_begin)
-		{
-			return result;
-		}
-		double const gap_end= m_gap_end.pick(input);
-		double const dist= gap_end - gap_begin;
-		if(result >= gap_end)
-		{
-			return result - dist;
-		}
-		return m_gap_value.pick(input);
-	}
-
-	mod_input_picker m_saw_begin;
-	mod_input_picker m_saw_end;
-	mod_input_picker m_gap_begin;
-	mod_input_picker m_gap_end;
-	mod_input_picker m_gap_value;
 };
 
 struct ModifiableValue
@@ -334,7 +355,7 @@ struct ModifiableValue
 	~ModifiableValue();
 	void set_manager(ModManager* man);
 	double evaluate(mod_val_inputs const& input);
-	void add_mod(ModFunctionType type, std::vector<mod_input_info>& params);
+	void add_mod(lua_State* L, int index);
 	ModFunction* get_mod(size_t index);
 	size_t num_mods() { return m_mods.size(); }
 	void remove_mod(size_t index);

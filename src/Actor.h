@@ -478,6 +478,7 @@ public:
 	RageColor GetDiffuses( int i ) const		{ return DestTweenState().diffuse[i]; };
 	float GetDiffuseAlpha() const			{ return DestTweenState().diffuse[0].a; };
 	void SetGlow( RageColor c )			{ DestTweenState().glow = c; };
+	void SetGlowAlpha(float c)			{ DestTweenState().glow.a = c; };
 	RageColor GetGlow() const			{ return DestTweenState().glow; };
 
 	void SetAux( float f )				{ DestTweenState().aux = f; }

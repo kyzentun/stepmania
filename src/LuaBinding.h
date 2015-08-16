@@ -163,6 +163,18 @@ public:
 
 #define COMMON_RETURN_SELF p->PushSelf(L); return 1;
 
+#define GET_SET_BOOL_METHOD(method_name, bool_name) \
+static int get_##method_name(T* p, lua_State* L) \
+{ \
+	lua_pushboolean(L, p->bool_name); \
+	return 1; \
+} \
+static int set_##method_name(T* p, lua_State* L) \
+{ \
+	p->bool_name= lua_toboolean(L, 1); \
+	COMMON_RETURN_SELF; \
+}
+
 #define ADD_METHOD( method_name ) \
 	AddMethod( #method_name, method_name )
 #define ADD_GET_SET_METHODS(method_name) \

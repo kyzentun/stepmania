@@ -59,36 +59,104 @@ void ApproachingValue::remove_from_update_list()
 	}
 }
 
+void ModInput::clear()
+{
+	m_type= MIT_Scalar;
+	m_scalar.set_value_instant(0.0);
+	m_offset.set_value_instant(0.0);
+	m_rep_enabled= false;
+	m_rep_begin.set_value_instant(0.0);
+	m_rep_end.set_value_instant(0.0);
+	m_unce_enabled= false;
+	m_unce_before.set_value_instant(0.0);
+	m_unce_begin.set_value_instant(0.0);
+	m_unce_during.set_value_instant(0.0);
+	m_unce_end.set_value_instant(0.0);
+	m_unce_after.set_value_instant(0.0);
+}
+
+void ModInput::load_from_lua(lua_State* L, int index)
+{
+	if(lua_isnumber(L, index))
+	{
+		m_type= MIT_Scalar;
+		m_scalar.set_value_instant(lua_tonumber(L, index));
+		return;
+	}
+	if(lua_istable(L, index))
+	{
+		lua_rawgeti(L, index, 1);
+		m_type= Enum::Check<ModInputType>(L, -1);
+		lua_pop(L, 1);
+		// The use of lua_tonumber is deliberate.  If the scalar or offset value
+		// does not exist, lua_tonumber will return 0.
+		lua_rawgeti(L, index, 2);
+		m_scalar.set_value_instant(lua_tonumber(L, -1));
+		lua_pop(L, 1);
+		lua_rawgeti(L, index, 3);
+		m_offset.set_value_instant(lua_tonumber(L, -1));
+		lua_pop(L, 1);
+		lua_getfield(L, index, "rep");
+		if(lua_istable(L, -1))
+		{
+			m_rep_enabled= true;
+			lua_rawgeti(L, -1, 1);
+			m_rep_begin.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+			lua_rawgeti(L, -1, 2);
+			m_rep_end.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, index, "unce");
+		if(lua_istable(L, -1))
+		{
+			m_unce_enabled= true;
+			lua_rawgeti(L, -1, 1);
+			m_unce_before.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+			lua_rawgeti(L, -1, 2);
+			m_unce_begin.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+			lua_rawgeti(L, -1, 3);
+			m_unce_during.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+			lua_rawgeti(L, -1, 4);
+			m_unce_end.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+			lua_rawgeti(L, -1, 5);
+			m_unce_after.set_value_instant(lua_tonumber(L, -1));
+			lua_pop(L, 1);
+		}
+		lua_pop(L, 1);
+	}
+}
 
 #define MOD_FUNC_CONSTRUCTOR(name) \
-ModFunction ## name(ModManager* man, std::vector<mod_input_info>& params) \
+ModFunction ## name(ModManager* man) \
 { \
 	set_manager(man); \
-	set_from_params(params); \
 }
 
 struct ModFunctionConstant : ModFunction
 {
 	MOD_FUNC_CONSTRUCTOR(Constant);
-	mod_input_picker value;
+	ModInput value;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return apply_gap(apply_saw(value.pick(input), input), input);
+		return value.pick(input);
 	}
 	virtual void set_manager(ModManager* man)
 	{
 		value.set_manager(man);
 	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		if(params.size() > 0)
-		{
-			value.set_from_info(params[0]);
-		}
+		load_inputs_from_lua(L, index, {&value});
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		push_inputs_internal(L, table_index, with_offsets, {&value});
+		push_inputs_internal(L, table_index, {&value});
 	}
 	virtual size_t num_inputs() { return 1; }
 };
@@ -96,33 +164,24 @@ struct ModFunctionConstant : ModFunction
 struct ModFunctionProduct : ModFunction
 {
 	MOD_FUNC_CONSTRUCTOR(Product);
-	mod_input_picker value;
-	mod_input_picker mult;
+	ModInput value;
+	ModInput mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return apply_gap(apply_saw(value.pick(input), input), input) *
-			mult.pick(input);
+		return value.pick(input) * mult.pick(input);
 	}
 	virtual void set_manager(ModManager* man)
 	{
 		value.set_manager(man);
 		mult.set_manager(man);
 	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		for(size_t i= 0; i < params.size(); ++i)
-		{
-			switch(i)
-			{
-				case 0: value.set_from_info(params[i]); break;
-				case 1: mult.set_from_info(params[i]); break;
-				default: break;
-			}
-		}
+		load_inputs_from_lua(L, index, {&value, &mult});
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		push_inputs_internal(L, table_index, with_offsets, {&value, &mult});
+		push_inputs_internal(L, table_index, {&value, &mult});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -130,33 +189,24 @@ struct ModFunctionProduct : ModFunction
 struct ModFunctionPower : ModFunction
 {
 	MOD_FUNC_CONSTRUCTOR(Power);
-	mod_input_picker value;
-	mod_input_picker mult;
+	ModInput value;
+	ModInput mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return pow(apply_gap(apply_saw(value.pick(input), input), input),
-			mult.pick(input));
+		return pow(value.pick(input), mult.pick(input));
 	}
 	virtual void set_manager(ModManager* man)
 	{
 		value.set_manager(man);
 		mult.set_manager(man);
 	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		for(size_t i= 0; i < params.size(); ++i)
-		{
-			switch(i)
-			{
-				case 0: value.set_from_info(params[i]); break;
-				case 1: mult.set_from_info(params[i]); break;
-				default: break;
-			}
-		}
+		load_inputs_from_lua(L, index, {&value, &mult});
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		push_inputs_internal(L, table_index, with_offsets, {&value, &mult});
+		push_inputs_internal(L, table_index, {&value, &mult});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -164,33 +214,24 @@ struct ModFunctionPower : ModFunction
 struct ModFunctionLog : ModFunction
 {
 	MOD_FUNC_CONSTRUCTOR(Log);
-	mod_input_picker value;
-	mod_input_picker base;
+	ModInput value;
+	ModInput base;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
-		return log(apply_gap(apply_saw(value.pick(input), input), input)) /
-			log(base.pick(input));
+		return log(value.pick(input)) / log(base.pick(input));
 	}
 	virtual void set_manager(ModManager* man)
 	{
 		value.set_manager(man);
 		base.set_manager(man);
 	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		for(size_t i= 0; i < params.size(); ++i)
-		{
-			switch(i)
-			{
-				case 0: value.set_from_info(params[i]); break;
-				case 1: base.set_from_info(params[i]); break;
-				default: break;
-			}
-		}
+		load_inputs_from_lua(L, index, {&value, &base});
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		push_inputs_internal(L, table_index, with_offsets, {&value, &base});
+		push_inputs_internal(L, table_index, {&value, &base});
 	}
 	virtual size_t num_inputs() { return 2; }
 };
@@ -199,10 +240,10 @@ struct ModFunctionWave : ModFunction
 {
 	ModFunctionWave() {}
 	MOD_FUNC_CONSTRUCTOR(Wave);
-	mod_input_picker angle;
-	mod_input_picker phase;
-	mod_input_picker amplitude;
-	mod_input_picker offset;
+	ModInput angle;
+	ModInput phase;
+	ModInput amplitude;
+	ModInput offset;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		double amp= amplitude.pick(input);
@@ -210,8 +251,7 @@ struct ModFunctionWave : ModFunction
 		{
 			return offset.pick(input);
 		}
-		double angle_res= apply_gap(apply_saw(angle.pick(input) +
-				phase.pick(input), input), input);
+		double angle_res= angle.pick(input) + phase.pick(input);
 		angle_res= fmod(angle_res, M_PI * 2.0);
 		if(angle_res < 0.0)
 		{
@@ -231,23 +271,13 @@ struct ModFunctionWave : ModFunction
 		amplitude.set_manager(man);
 		offset.set_manager(man);
 	}
-	virtual void set_from_params(std::vector<mod_input_info>& params)
+	virtual void load_from_lua(lua_State* L, int index)
 	{
-		for(size_t i= 0; i < params.size(); ++i)
-		{
-			switch(i)
-			{
-				case 0: angle.set_from_info(params[i]); break;
-				case 1: phase.set_from_info(params[i]); break;
-				case 2: amplitude.set_from_info(params[i]); break;
-				case 3: offset.set_from_info(params[i]); break;
-				default: break;
-			}
-		}
+		load_inputs_from_lua(L, index, {&angle, &phase, &amplitude, &offset});
 	}
-	virtual void push_inputs(lua_State* L, int table_index, bool with_offsets)
+	virtual void push_inputs(lua_State* L, int table_index)
 	{
-		push_inputs_internal(L, table_index, with_offsets,
+		push_inputs_internal(L, table_index,
 			{&angle, &phase, &amplitude, &offset});
 	}
 	virtual size_t num_inputs() { return 4; }
@@ -292,28 +322,41 @@ struct ModFunctionTriangle : ModFunctionWave
 	}
 };
 
-static ModFunction* create_field_mod(ModManager* man, ModFunctionType type, vector<mod_input_info>& params)
+static ModFunction* create_field_mod(ModManager* man, lua_State* L, int index)
 {
+	lua_rawgeti(L, index, 1);
+	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1);
+	lua_pop(L, 1);
+	ModFunction* ret= nullptr;
 	switch(type)
 	{
 		case MFT_Constant:
-			return new ModFunctionConstant(man, params);
+			ret= new ModFunctionConstant(man);
+			break;
 		case MFT_Product:
-			return new ModFunctionProduct(man, params);
+			ret= new ModFunctionProduct(man);
+			break;
 		case MFT_Power:
-			return new ModFunctionPower(man, params);
+			ret= new ModFunctionPower(man);
+			break;
 		case MFT_Log:
-			return new ModFunctionLog(man, params);
+			ret= new ModFunctionLog(man);
+			break;
 		case MFT_Sine:
-			return new ModFunctionSine(man, params);
+			ret= new ModFunctionSine(man);
+			break;
 		case MFT_Square:
-			return new ModFunctionSquare(man, params);
+			ret= new ModFunctionSquare(man);
+			break;
 		case MFT_Triangle:
-			return new ModFunctionTriangle(man, params);
+			ret= new ModFunctionTriangle(man);
+			break;
 		default:
 			return nullptr;
 	}
-	return nullptr;
+	// FIXME: This leaks memory if there is an error in the lua.
+	ret->load_from_lua(L, index);
+	return ret;
 }
 
 ModifiableValue::~ModifiableValue()
@@ -336,9 +379,9 @@ double ModifiableValue::evaluate(mod_val_inputs const& input)
 	return sum;
 }
 
-void ModifiableValue::add_mod(ModFunctionType type, std::vector<mod_input_info>& params)
+void ModifiableValue::add_mod(lua_State* L, int index)
 {
-	ModFunction* new_mod= create_field_mod(m_manager, type, params);
+	ModFunction* new_mod= create_field_mod(m_manager, L, index);
 	if(new_mod == nullptr)
 	{
 		LuaHelpers::ReportScriptError("Problem creating modifier: unknown type.");
@@ -388,6 +431,67 @@ static int set_ ## member(T* p, lua_State* L) \
 	COMMON_RETURN_SELF; \
 }
 
+struct LunaModInput : Luna<ModInput>
+{
+	static int get_type(T* p, lua_State* L)
+	{
+		Enum::Push(L, p->m_type);
+		return 1;
+	}
+	static int set_type(T* p, lua_State* L)
+	{
+		p->m_type= Enum::Check<ModInputType>(L, 1);
+		COMMON_RETURN_SELF;
+	}
+	static int get_scalar(T* p, lua_State* L)
+	{
+		p->m_scalar.PushSelf(L);
+		return 1;
+	}
+	static int get_offset(T* p, lua_State* L)
+	{
+		p->m_offset.PushSelf(L);
+		return 1;
+	}
+	GET_SET_BOOL_METHOD(rep_enabled, m_rep_enabled);
+	GET_SET_BOOL_METHOD(unce_enabled, m_unce_enabled);
+	static int get_rep(T* p, lua_State* L)
+	{
+		lua_createtable(L, 2, 0);
+		p->m_rep_begin.PushSelf(L);
+		lua_rawseti(L, -2, 1);
+		p->m_rep_end.PushSelf(L);
+		lua_rawseti(L, -2, 2);
+		return 1;
+	}
+	static int get_unce(T* p, lua_State* L)
+	{
+		lua_createtable(L, 2, 0);
+		p->m_unce_before.PushSelf(L);
+		lua_rawseti(L, -2, 1);
+		p->m_unce_begin.PushSelf(L);
+		lua_rawseti(L, -2, 2);
+		p->m_unce_during.PushSelf(L);
+		lua_rawseti(L, -2, 3);
+		p->m_unce_end.PushSelf(L);
+		lua_rawseti(L, -2, 4);
+		p->m_unce_after.PushSelf(L);
+		lua_rawseti(L, -2, 5);
+		return 1;
+	}
+	LunaModInput()
+	{
+		ADD_GET_SET_METHODS(type);
+		ADD_GET_SET_METHODS(rep_enabled);
+		ADD_GET_SET_METHODS(unce_enabled);
+		ADD_METHOD(get_scalar);
+		ADD_METHOD(get_offset);
+		ADD_METHOD(get_rep);
+		ADD_METHOD(get_unce);
+	}
+};
+LUA_REGISTER_CLASS(ModInput);
+
 struct LunaApproachingValue : Luna<ApproachingValue>
 {
 	LUA_GET_SET_FLOAT(value);
@@ -412,9 +516,8 @@ struct LunaModFunction : Luna<ModFunction>
 {
 	static int get_inputs(T* p, lua_State* L)
 	{
-		bool with_offsets= lua_toboolean(L, 1);
 		lua_createtable(L, p->num_inputs(), 0);
-		p->push_inputs(L, lua_gettop(L), with_offsets);
+		p->push_inputs(L, lua_gettop(L));
 		return 1;
 	}
 	LunaModFunction()
@@ -428,39 +531,7 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 {
 	static int add_mod(T* p, lua_State* L)
 	{
-		ModFunctionType type= Enum::Check<ModFunctionType>(L, 1);
-		vector<mod_input_info> params;
-		if(lua_istable(L, 2))
-		{
-			size_t param_count= lua_objlen(L, 2);
-			for(size_t p= 1; p <= param_count; ++p)
-			{
-				mod_input_info info;
-				lua_rawgeti(L, 2, p);
-				if(lua_isnumber(L, -1))
-				{
-					info.type= MIT_Scalar;
-					info.scalar= lua_tonumber(L, -1);
-				}
-				else if(lua_istable(L, -1))
-				{
-					lua_rawgeti(L, -1, 1);
-					info.type= Enum::Check<ModInputType>(L, -1);
-					lua_pop(L, 1);
-					// The use of lua_tonumber is deliberate.  If the scalar or offset
-					// value does not exist, lua_tonumber will return 0.
-					lua_rawgeti(L, -1, 2);
-					info.scalar= lua_tonumber(L, -1);
-					lua_pop(L, 1);
-					lua_rawgeti(L, -1, 3);
-					info.offset= lua_tonumber(L, -1);
-					lua_pop(L, 1);
-				}
-				lua_pop(L, 1);
-				params.push_back(info);
-			}
-		}
-		p->add_mod(type, params);
+		p->add_mod(L, lua_gettop(L));
 		COMMON_RETURN_SELF;
 	}
 	static int get_mod(T* p, lua_State* L)

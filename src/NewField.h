@@ -122,6 +122,13 @@ struct NewFieldColumn : ActorFrame
 	ModifiableTransform m_note_mod;
 	ModifiableTransform m_column_mod;
 
+	ModifiableValue m_note_alpha;
+	ModifiableValue m_note_glow;
+	ModifiableValue m_receptor_alpha;
+	ModifiableValue m_receptor_glow;
+	ModifiableValue m_explosion_alpha;
+	ModifiableValue m_explosion_glow;
+
 private:
 	double m_curr_beat;
 	double m_curr_second;
@@ -140,7 +147,7 @@ private:
 	// rendered in different phases.  All hold bodies must be drawn first, then
 	// all taps, so the taps appear on top of the hold bodies and are not
 	// obscured.
-	void draw_heads_internal(std::vector<column_head>& heads);
+	void draw_heads_internal(std::vector<column_head>& heads, bool receptors);
 	void draw_holds_internal();
 	void draw_taps_internal();
 	NoteData::TrackMap::const_iterator first_note_visible_prev_frame;

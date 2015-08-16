@@ -34,6 +34,9 @@ NewFieldColumn::NewFieldColumn()
 	 m_reverse_percent(&m_mod_manager, 0.0),
 	 m_center_percent(&m_mod_manager, 0.0),
 	 m_note_mod(&m_mod_manager), m_column_mod(&m_mod_manager),
+	 m_note_alpha(&m_mod_manager, 1.0), m_note_glow(&m_mod_manager, 0.0),
+	 m_receptor_alpha(&m_mod_manager, 1.0), m_receptor_glow(&m_mod_manager, 0.0),
+	 m_explosion_alpha(&m_mod_manager, 1.0), m_explosion_glow(&m_mod_manager, 0.0),
 	 m_curr_beat(0.0f), m_curr_second(0.0),
 	 m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
@@ -145,9 +148,15 @@ struct strip_buffer
 	enum { size= 512 };
 	RageSpriteVertex* buf;
 	RageSpriteVertex* v;
+	// Hold rendering requires two passes, the normal pass and the glow pass.
+	// Recalculating all the vert positions for the second pass would be
+	// expensive, so the glow color for each vert is stored in glow_buf.
+	RageVColor* glow_buf;
+	RageVColor* glow_v;
 	strip_buffer()
 	{
 		buf= (RageSpriteVertex*) malloc(size * sizeof(RageSpriteVertex));
+		glow_buf= (RageVColor*) malloc(size * sizeof(RageVColor));
 		init();
 	}
 	~strip_buffer()
@@ -157,6 +166,7 @@ struct strip_buffer
 	void init()
 	{
 		v= buf;
+		glow_v= glow_buf;
 	}
 	void rollback()
 	{
@@ -170,18 +180,34 @@ struct strip_buffer
 			buf[1]= v[-2];
 			buf[2]= v[-1];
 			v= buf + 3;
+			glow_buf[0]= glow_v[-3];
+			glow_buf[1]= glow_v[-2];
+			glow_buf[2]= glow_v[-1];
+			glow_v= glow_buf + 3;
 		}
 	}
 	void draw()
 	{
 		DISPLAY->DrawSymmetricQuadStrip(buf, v-buf);
 	}
+	void swap_glow()
+	{
+		int verts_used= v - buf;
+		for(int i= 0; i < verts_used; ++i)
+		{
+			RageVColor temp= buf[i].c;
+			buf[i].c= glow_buf[i];
+			glow_buf[i]= temp;
+		}
+	}
 	int used() const { return v - buf; }
 	int avail() const { return size - used(); }
-	void add_vert(RageVector3 const& pos, RageColor const& color, RageVector2 const& texcoord)
+	void add_vert(RageVector3 const& pos, RageColor const& color, RageColor const& glow, RageVector2 const& texcoord)
 	{
 		v->p= pos;  v->c= color;  v->t= texcoord;
 		v+= 1;
+		(*glow_v)= glow;
+		glow_v+= 1;
 	}
 };
 
@@ -335,12 +361,12 @@ struct hold_time_lerper
 
 static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	RageVector3 const& left, RageVector3 const& center,
-	RageVector3 const& right, RageColor const& color,
+	RageVector3 const& right, RageColor const& color, RageColor const& glow_color,
 	float const tex_left, double const tex_center, float const tex_right)
 {
-	verts_to_draw.add_vert(left, color, RageVector2(tex_left, tex_y));
-	verts_to_draw.add_vert(center, color, RageVector2(tex_center, tex_y));
-	verts_to_draw.add_vert(right, color, RageVector2(tex_right, tex_y));
+	verts_to_draw.add_vert(left, color, glow_color, RageVector2(tex_left, tex_y));
+	verts_to_draw.add_vert(center, color, glow_color, RageVector2(tex_center, tex_y));
+	verts_to_draw.add_vert(right, color, glow_color, RageVector2(tex_right, tex_y));
 }
 
 void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, double head_second, double tail_beat, double tail_second)
@@ -444,8 +470,12 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 			render_left.z + trans.pos.z);
 		const RageVector3 center_vert(trans.pos.x, render_y, 0 + trans.pos.z);
 		const RageVector3 right_vert(-render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
-		const RageColor color(1.0, 1.0, 1.0, 1.0);
-#define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, tex_left, tex_center, tex_right
+		mod_val_inputs input(curr_beat, curr_second, m_curr_beat, m_curr_second);
+		double alpha= m_note_alpha.evaluate(input);
+		double glow= m_note_glow.evaluate(input);
+		const RageColor color(1.0, 1.0, 1.0, alpha);
+		const RageColor glow_color(1.0, 1.0, 1.0, glow);
+#define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, glow_color, tex_left, tex_center, tex_right
 		for(size_t i= 0; i < tex_coords.size(); ++i)
 		{
 			add_vert_strip(tex_coords[i], add_vert_strip_args);
@@ -453,15 +483,27 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 #undef add_vert_strip_args
 		if(verts_to_draw.avail() < 9 || last_vert_set)
 		{
+			DISPLAY->SetTextureMode(TextureUnit_1, TextureMode_Modulate);
+			DISPLAY->SetCullMode(CULL_NONE);
+			DISPLAY->SetTextureWrapping(TextureUnit_1, false);
 			for(size_t t= 0; t < data.parts.size(); ++t)
 			{
 				DISPLAY->SetTexture(TextureUnit_1, data.parts[t]->GetTexHandle());
 				DISPLAY->SetBlendMode(t == 0 ? BLEND_NORMAL : BLEND_ADD);
-				DISPLAY->SetCullMode(CULL_NONE);
-				DISPLAY->SetTextureWrapping(TextureUnit_1, false);
 				verts_to_draw.draw();
 			}
+			verts_to_draw.swap_glow();
+			DISPLAY->SetTextureMode(TextureUnit_1, TextureMode_Glow);
+			for(size_t t= 0; t < data.parts.size(); ++t)
+			{
+				DISPLAY->SetTexture(TextureUnit_1, data.parts[t]->GetTexHandle());
+				DISPLAY->SetBlendMode(t == 0 ? BLEND_NORMAL : BLEND_ADD);
+				verts_to_draw.draw();
+			}
+			// Intentionally swap the glow back after calling rollback so that only
+			// the set of verts that will remain are swapped.
 			verts_to_draw.rollback();
+			verts_to_draw.swap_glow();
 		}
 	}
 }
@@ -628,16 +670,31 @@ void NewFieldColumn::draw_things_in_step(render_step step)
 	Draw();
 }
 
-void NewFieldColumn::draw_heads_internal(vector<column_head>& heads)
+void NewFieldColumn::draw_heads_internal(vector<column_head>& heads, bool receptors)
 {
 	double const y_offset= apply_reverse_shift(
-		calc_y_offset(m_curr_beat, m_curr_second));;
+		calc_y_offset(m_curr_beat, m_curr_second));
+	mod_val_inputs input(m_curr_beat, m_curr_second, m_curr_beat, m_curr_second);
+	double alpha= 1.0;
+	double glow= 0.0;
+	if(receptors)
+	{
+		alpha= m_receptor_alpha.evaluate(input);
+		glow= m_receptor_glow.evaluate(input);
+	}
+	else
+	{
+		alpha= m_explosion_alpha.evaluate(input);
+		glow= m_explosion_glow.evaluate(input);
+	}
 	transform trans;
 	calc_transform(m_curr_beat, m_curr_second, trans);
 	trans.pos.y+= y_offset;
 	for(auto&& head : heads)
 	{
 		head.frame.set_transform(trans);
+		head.frame.SetDiffuseAlpha(alpha);
+		head.frame.SetGlowAlpha(glow);
 		head.frame.Draw();
 	}
 }
@@ -776,10 +833,15 @@ void NewFieldColumn::draw_taps_internal()
 			// noteskin doesn't have them.
 			if(act.act != nullptr)
 			{
+				mod_val_inputs input(act.draw_beat, act.draw_second, m_curr_beat, m_curr_second);
+				double alpha= m_note_alpha.evaluate(input);
+				double glow= m_note_glow.evaluate(input);
 				transform trans;
 				calc_transform(act.draw_beat, act.draw_second, trans);
 				trans.pos.y+= apply_reverse_shift(act.y_offset);
 				act.act->set_transform(trans);
+				act.act->SetDiffuseAlpha(alpha);
+				act.act->SetGlow(RageColor(1, 1, 1, glow));
 				act.act->Draw();
 			}
 		}
@@ -852,7 +914,7 @@ void NewFieldColumn::DrawPrimitives()
 	switch(curr_render_step)
 	{
 		case RENDER_BELOW_NOTES:
-			draw_heads_internal(m_heads_below_notes);
+			draw_heads_internal(m_heads_below_notes, true);
 			break;
 		case RENDER_HOLDS:
 			draw_holds_internal();
@@ -864,7 +926,7 @@ void NewFieldColumn::DrawPrimitives()
 			ActorFrame::DrawPrimitives();
 			break;
 		case RENDER_ABOVE_NOTES:
-			draw_heads_internal(m_heads_above_notes);
+			draw_heads_internal(m_heads_above_notes, false);
 			break;
 		default:
 			break;
@@ -1064,7 +1126,7 @@ static int get_##member(T* p, lua_State* L) \
 	return 1; \
 }
 #define GET_TRANS_DIM(trans, part, dim) \
-static int get_##trans##_##part##_##dim##_mod(T* p, lua_State* L) \
+static int get_##trans##_##part##_##dim(T* p, lua_State* L) \
 { \
 	p->m_##trans##_mod.part##_mod.dim##_mod.PushSelf(L); \
 	return 1; \
@@ -1078,9 +1140,9 @@ GET_TRANS_PART(trans, pos); \
 GET_TRANS_PART(trans, rot); \
 GET_TRANS_PART(trans, zoom);
 #define ADD_TRANS_PART(trans, part) \
-ADD_METHOD(get_##trans##_##part##_##x_mod); \
-ADD_METHOD(get_##trans##_##part##_##y_mod); \
-ADD_METHOD(get_##trans##_##part##_##z_mod);
+ADD_METHOD(get_##trans##_##part##_##x); \
+ADD_METHOD(get_##trans##_##part##_##y); \
+ADD_METHOD(get_##trans##_##part##_##z);
 #define ADD_TRANS(trans) \
 ADD_TRANS_PART(trans, pos); \
 ADD_TRANS_PART(trans, rot); \
@@ -1096,6 +1158,12 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_MEMBER(center_percent);
 	GET_TRANS(note);
 	GET_TRANS(column);
+	GET_MEMBER(note_alpha);
+	GET_MEMBER(note_glow);
+	GET_MEMBER(receptor_alpha);
+	GET_MEMBER(receptor_glow);
+	GET_MEMBER(explosion_alpha);
+	GET_MEMBER(explosion_glow);
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
@@ -1106,6 +1174,12 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_METHOD(get_center_percent);
 		ADD_TRANS(note);
 		ADD_TRANS(column);
+		ADD_METHOD(get_note_alpha);
+		ADD_METHOD(get_note_glow);
+		ADD_METHOD(get_receptor_alpha);
+		ADD_METHOD(get_receptor_glow);
+		ADD_METHOD(get_explosion_alpha);
+		ADD_METHOD(get_explosion_glow);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);

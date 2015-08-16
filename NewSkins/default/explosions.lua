@@ -19,7 +19,7 @@ return function(button_list)
 			end,
 			Def.Sprite{
 				Texture= "explosion.png", InitCommand= function(self)
-					self:diffusealpha(0):SetAllStateDelays(.05)
+					self:visible(false):SetAllStateDelays(.05)
 				end,
 				-- The ColumnJudgment command is the way to make the actor respond to
 				-- a judgment that occurs in the column.  The param argument is a table
@@ -49,16 +49,22 @@ return function(button_list)
 					}
 					local exp_color= diffuse[param.tap_note_score or param.hold_note_score]
 					if exp_color then
+						-- The hide at the end is queued so that if the notefield applies
+						-- glow to the explosion, it will still disappear at then end.
 						self:stoptweening()
-							:diffuse(exp_color):zoom(1):diffusealpha(.9)
+							:diffuse(exp_color):zoom(1):diffusealpha(.9):visible(true)
 							:linear(0.1):zoom(2):diffusealpha(.3)
 							:linear(0.06):diffusealpha(0)
+							:sleep(0):queuecommand("hide")
 					end
+				end,
+				hideCommand= function(self)
+					self:visible(false)
 				end,
 			},
 			Def.Sprite{
 				Texture= "explosion.png", InitCommand= function(self)
-					self:diffusealpha(0):SetAllStateDelays(.05)
+					self:visible(false):SetAllStateDelays(.05)
 				end,
 				-- The Hold command is the way to respond to a hold being active.
 				-- When there is a hold in the column, the Hold command will be sent.
@@ -76,16 +82,20 @@ return function(button_list)
 					if hold_colors[param.type] then
 						if param.start then
 							self:finishtweening()
-								:zoom(1.25):diffuse(white)
+								:zoom(1.25):diffuse(white):visible(true)
 								:diffuseblink():effectcolor1(hold_colors[param.type])
 								:effectcolor2(white):effectperiod(.1)
 						elseif param.finished then
 							self:stopeffect():linear(0.06):diffusealpha(0)
+								:sleep(0):queuecommand("hide")
 						else
 							self:zoom(param.life * 1.25)
 						end
 					end
-				end
+				end,
+				hideCommand= function(self)
+					self:visible(false)
+				end,
 			}
 		}
 	end

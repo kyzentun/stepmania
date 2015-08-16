@@ -28,6 +28,7 @@ static const char* ModInputTypeNames[] = {
 	"MusicSecond",
 	"DistBeat",
 	"DistSecond",
+	"YOffset",
 };
 XToString(ModInputType);
 LuaXType(ModInputType);

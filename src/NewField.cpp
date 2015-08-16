@@ -92,9 +92,8 @@ double NewFieldColumn::calc_y_offset(double beat, double second)
 	return note_size * m_speed_mod.evaluate(input);
 }
 
-void NewFieldColumn::calc_transform(double beat, double second, transform& trans)
+void NewFieldColumn::calc_transform(mod_val_inputs& input, transform& trans)
 {
-	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
 	m_note_mod.evaluate(input, trans);
 }
 
@@ -432,7 +431,8 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 		double curr_second= second_lerper.lerp(curr_y);
 
 		transform trans;
-		calc_transform(curr_beat, curr_second, trans);
+		mod_val_inputs mod_input(curr_beat, curr_second, m_curr_beat, m_curr_second, curr_y);
+		calc_transform(mod_input, trans);
 
 		// TODO: get render_forward from a spline.
 		const RageVector3 render_forward(0.0f, 1.0f, 0.0f);
@@ -470,9 +470,8 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 			render_left.z + trans.pos.z);
 		const RageVector3 center_vert(trans.pos.x, render_y, 0 + trans.pos.z);
 		const RageVector3 right_vert(-render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
-		mod_val_inputs input(curr_beat, curr_second, m_curr_beat, m_curr_second);
-		double alpha= m_note_alpha.evaluate(input);
-		double glow= m_note_glow.evaluate(input);
+		double alpha= m_note_alpha.evaluate(mod_input);
+		double glow= m_note_glow.evaluate(mod_input);
 		const RageColor color(1.0, 1.0, 1.0, alpha);
 		const RageColor glow_color(1.0, 1.0, 1.0, glow);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, glow_color, tex_left, tex_center, tex_right
@@ -688,7 +687,7 @@ void NewFieldColumn::draw_heads_internal(vector<column_head>& heads, bool recept
 		glow= m_explosion_glow.evaluate(input);
 	}
 	transform trans;
-	calc_transform(m_curr_beat, m_curr_second, trans);
+	calc_transform(input, trans);
 	trans.pos.y+= y_offset;
 	for(auto&& head : heads)
 	{
@@ -712,7 +711,8 @@ void NewFieldColumn::draw_holds_internal()
 		TapNote const& tn= holdit->second;
 		double const hold_beat= NoteRowToBeat(hold_row);
 		double const hold_second= tn.occurs_at_second;
-		double const quantization= quantization_for_time(hold_beat, hold_second);
+		mod_val_inputs input(hold_beat, hold_second, m_curr_beat, m_curr_second, calc_y_offset(hold_beat, hold_second));
+		double const quantization= quantization_for_time(input);
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
 		m_newskin->get_hold_render_data(tn.subType, active, reverse, quantization, beat, data);
@@ -747,7 +747,6 @@ void NewFieldColumn::draw_taps_internal()
 		TapNote const& tn= tapit->second;
 		double const tap_beat= NoteRowToBeat(tap_row);
 		double const tap_second= tn.occurs_at_second;
-		double const quantization= quantization_for_time(tap_beat, tap_second);
 		NewSkinTapPart part= NSTP_Tap;
 		NewSkinTapOptionalPart head_part= NewSkinTapOptionalPart_Invalid;
 		NewSkinTapOptionalPart tail_part= NewSkinTapOptionalPart_Invalid;
@@ -804,6 +803,8 @@ void NewFieldColumn::draw_taps_internal()
 			acts[0].y_offset= calc_y_offset(head_beat, head_second);
 			if(y_offset_visible(acts[0].y_offset))
 			{
+				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
+				double const quantization= quantization_for_time(mod_input);
 				acts[0].act= m_newskin->get_tap_actor(part, quantization, beat);
 				acts[0].draw_second= head_second;
 			}
@@ -816,6 +817,8 @@ void NewFieldColumn::draw_taps_internal()
 			acts[0].y_offset= calc_y_offset(tail_beat, tail_second);
 			if(y_offset_visible(acts[0].y_offset))
 			{
+				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
+				double const quantization= quantization_for_time(mod_input);
 				acts[0].act= m_newskin->get_optional_actor(tail_part, quantization, beat);
 				acts[0].draw_second= tail_second;
 			}
@@ -823,6 +826,8 @@ void NewFieldColumn::draw_taps_internal()
 			acts[1].y_offset= calc_y_offset(head_beat, head_second);
 			if(y_offset_visible(acts[1].y_offset))
 			{
+				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[1].y_offset);
+				double const quantization= quantization_for_time(mod_input);
 				acts[1].act= m_newskin->get_optional_actor(head_part, quantization, beat);
 				acts[1].draw_second= head_second;
 			}
@@ -833,11 +838,11 @@ void NewFieldColumn::draw_taps_internal()
 			// noteskin doesn't have them.
 			if(act.act != nullptr)
 			{
-				mod_val_inputs input(act.draw_beat, act.draw_second, m_curr_beat, m_curr_second);
+				mod_val_inputs input(act.draw_beat, act.draw_second, m_curr_beat, m_curr_second, act.y_offset);
 				double alpha= m_note_alpha.evaluate(input);
 				double glow= m_note_glow.evaluate(input);
 				transform trans;
-				calc_transform(act.draw_beat, act.draw_second, trans);
+				calc_transform(input, trans);
 				trans.pos.y+= apply_reverse_shift(act.y_offset);
 				act.act->set_transform(trans);
 				act.act->SetDiffuseAlpha(alpha);

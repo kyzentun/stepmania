@@ -14,12 +14,6 @@ struct ModManager;
 
 struct ApproachingValue
 {
-	ApproachingValue()
-		:parent(nullptr), value(0.0), speed(0.0), goal(0.0)
-	{}
-	ApproachingValue(double v)
-		:parent(nullptr), value(v), speed(0.0), goal(v)
-	{}
 	ApproachingValue(ModManager* man, double v)
 		:parent(man), value(v), speed(0.0), goal(v)
 	{}
@@ -190,11 +184,11 @@ struct ModInput
 	ApproachingValue m_unce_end;
 	ApproachingValue m_unce_after;
 
-	ModInput()
-		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0), m_rep_enabled(false),
-		m_rep_begin(0.0), m_rep_end(0.0), m_unce_enabled(false),
-		m_unce_before(0.0), m_unce_begin(0.0), m_unce_during(0.0),
-		m_unce_end(0.0), m_unce_after(0.0)
+	ModInput(ModManager* man)
+		:m_type(MIT_Scalar), m_scalar(man, 0.0), m_offset(man, 0.0),
+		m_rep_enabled(false), m_rep_begin(man, 0.0), m_rep_end(man, 0.0),
+		m_unce_enabled(false), m_unce_before(man, 0.0), m_unce_begin(man, 0.0),
+		m_unce_during(man, 0.0), m_unce_end(man, 0.0), m_unce_after(man, 0.0)
 	{}
 	void clear();
 	void load_from_lua(lua_State* L, int index);
@@ -264,18 +258,6 @@ struct ModInput
 		ret= apply_unce(apply_rep(ret));
 		return (ret * m_scalar.get_value()) + m_offset.get_value();
 	}
-	void set_manager(ModManager* man)
-	{
-		m_scalar.set_manager(man);
-		m_offset.set_manager(man);
-		m_rep_begin.set_manager(man);
-		m_rep_end.set_manager(man);
-		m_unce_before.set_manager(man);
-		m_unce_begin.set_manager(man);
-		m_unce_during.set_manager(man);
-		m_unce_end.set_manager(man);
-		m_unce_after.set_manager(man);
-	}
 	virtual void PushSelf(lua_State* L);
 };
 
@@ -294,21 +276,23 @@ enum ModFunctionType
 const RString& ModFunctionTypeToString(ModFunctionType fmt);
 LuaDeclareType(ModFunctionType);
 
+struct ModifiableValue;
+
 struct ModFunction
 {
-	ModFunction() {}
-	ModFunction(ModManager* man)
-	{
-		set_manager(man);
-	}
+	ModFunction(ModifiableValue* parent)
+		:m_parent(parent)
+	{}
 	virtual ~ModFunction() {}
+
+	std::string const& get_name() { return m_name; }
+
 	virtual void update(double delta) { UNUSED(delta); }
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		UNUSED(input);
 		return 0.0;
 	}
-	virtual void set_manager(ModManager* man) { UNUSED(man); }
 	virtual void load_from_lua(lua_State* L, int index)
 	{
 		UNUSED(L);
@@ -341,6 +325,16 @@ protected:
 		// {type, input, ...}
 		// The ... is for the inputs after the first.
 		// So the first input is at lua table index 2.
+		lua_getfield(L, index, "name");
+		if(lua_isstring(L, -1))
+		{
+			m_name= lua_tostring(L, -1);
+		}
+		else
+		{
+			m_name= unique_name("mod");
+		}
+		lua_pop(L, 1);
 		size_t elements= lua_objlen(L, index);
 		size_t limit= std::min(elements, inputs.size()+2);
 		for(size_t el= 2; el <= limit; ++el)
@@ -350,23 +344,21 @@ protected:
 			lua_pop(L, 1);
 		}
 	}
+
+	std::string m_name;
+	ModifiableValue* m_parent;
 };
 
 struct ModifiableValue
 {
-	ModifiableValue()
-		:m_manager(nullptr)
-	{}
 	ModifiableValue(ModManager* man, double value)
 		:m_manager(man), m_value(man, value)
 	{}
 	~ModifiableValue();
-	void set_manager(ModManager* man);
 	double evaluate(mod_val_inputs const& input);
-	void add_mod(lua_State* L, int index);
-	ModFunction* get_mod(size_t index);
-	size_t num_mods() { return m_mods.size(); }
-	void remove_mod(size_t index);
+	ModFunction* add_mod(lua_State* L, int index);
+	ModFunction* get_mod(std::string const& name);
+	void remove_mod(std::string const& name);
 	void clear_mods();
 
 	ApproachingValue& get_value() { return m_value; }
@@ -375,7 +367,7 @@ struct ModifiableValue
 private:
 	ModManager* m_manager;
 	ApproachingValue m_value;
-	std::vector<ModFunction*> m_mods;
+	std::unordered_map<std::string, ModFunction*> m_mods;
 };
 
 struct ModifiableVector3

@@ -133,23 +133,15 @@ void ModInput::load_from_lua(lua_State* L, int index)
 	}
 }
 
-#define MOD_FUNC_CONSTRUCTOR(name) \
-ModFunction ## name(ModManager* man) \
-{ \
-	set_manager(man); \
-}
-
 struct ModFunctionConstant : ModFunction
 {
-	MOD_FUNC_CONSTRUCTOR(Constant);
+	ModFunctionConstant(ModifiableValue* parent, ModManager* man)
+		:ModFunction(parent), value(man)
+	{}
 	ModInput value;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		return value.pick(input);
-	}
-	virtual void set_manager(ModManager* man)
-	{
-		value.set_manager(man);
 	}
 	virtual void load_from_lua(lua_State* L, int index)
 	{
@@ -164,17 +156,14 @@ struct ModFunctionConstant : ModFunction
 
 struct ModFunctionProduct : ModFunction
 {
-	MOD_FUNC_CONSTRUCTOR(Product);
+	ModFunctionProduct(ModifiableValue* parent, ModManager* man)
+		:ModFunction(parent), value(man), mult(man)
+	{}
 	ModInput value;
 	ModInput mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		return value.pick(input) * mult.pick(input);
-	}
-	virtual void set_manager(ModManager* man)
-	{
-		value.set_manager(man);
-		mult.set_manager(man);
 	}
 	virtual void load_from_lua(lua_State* L, int index)
 	{
@@ -189,17 +178,14 @@ struct ModFunctionProduct : ModFunction
 
 struct ModFunctionPower : ModFunction
 {
-	MOD_FUNC_CONSTRUCTOR(Power);
+	ModFunctionPower(ModifiableValue* parent, ModManager* man)
+		:ModFunction(parent), value(man), mult(man)
+	{}
 	ModInput value;
 	ModInput mult;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		return pow(value.pick(input), mult.pick(input));
-	}
-	virtual void set_manager(ModManager* man)
-	{
-		value.set_manager(man);
-		mult.set_manager(man);
 	}
 	virtual void load_from_lua(lua_State* L, int index)
 	{
@@ -214,17 +200,14 @@ struct ModFunctionPower : ModFunction
 
 struct ModFunctionLog : ModFunction
 {
-	MOD_FUNC_CONSTRUCTOR(Log);
+	ModFunctionLog(ModifiableValue* parent, ModManager* man)
+		:ModFunction(parent), value(man), base(man)
+	{}
 	ModInput value;
 	ModInput base;
 	virtual double evaluate(mod_val_inputs const& input)
 	{
 		return log(value.pick(input)) / log(base.pick(input));
-	}
-	virtual void set_manager(ModManager* man)
-	{
-		value.set_manager(man);
-		base.set_manager(man);
 	}
 	virtual void load_from_lua(lua_State* L, int index)
 	{
@@ -239,8 +222,9 @@ struct ModFunctionLog : ModFunction
 
 struct ModFunctionWave : ModFunction
 {
-	ModFunctionWave() {}
-	MOD_FUNC_CONSTRUCTOR(Wave);
+	ModFunctionWave(ModifiableValue* parent, ModManager* man)
+		:ModFunction(parent), angle(man), phase(man), amplitude(man), offset(man)
+	{}
 	ModInput angle;
 	ModInput phase;
 	ModInput amplitude;
@@ -265,13 +249,6 @@ struct ModFunctionWave : ModFunction
 	{
 		return angle;
 	}
-	virtual void set_manager(ModManager* man)
-	{
-		angle.set_manager(man);
-		phase.set_manager(man);
-		amplitude.set_manager(man);
-		offset.set_manager(man);
-	}
 	virtual void load_from_lua(lua_State* L, int index)
 	{
 		load_inputs_from_lua(L, index, {&angle, &phase, &amplitude, &offset});
@@ -286,8 +263,9 @@ struct ModFunctionWave : ModFunction
 
 struct ModFunctionSine : ModFunctionWave
 {
-	ModFunctionSine() {}
-	MOD_FUNC_CONSTRUCTOR(Sine);
+	ModFunctionSine(ModifiableValue* parent, ModManager* man)
+		:ModFunctionWave(parent, man)
+	{}
 	virtual double eval_internal(double const angle)
 	{
 		return RageFastSin(angle);
@@ -296,8 +274,9 @@ struct ModFunctionSine : ModFunctionWave
 
 struct ModFunctionSquare : ModFunctionWave
 {
-	ModFunctionSquare() {}
-	MOD_FUNC_CONSTRUCTOR(Square);
+	ModFunctionSquare(ModifiableValue* parent, ModManager* man)
+		:ModFunctionWave(parent, man)
+	{}
 	virtual double eval_internal(double const angle)
 	{
 		return angle >= M_PI ? -1.0 : 1.0;
@@ -306,8 +285,9 @@ struct ModFunctionSquare : ModFunctionWave
 
 struct ModFunctionTriangle : ModFunctionWave
 {
-	ModFunctionTriangle() {}
-	MOD_FUNC_CONSTRUCTOR(Triangle);
+	ModFunctionTriangle(ModifiableValue* parent, ModManager* man)
+		:ModFunctionWave(parent, man)
+	{}
 	virtual double eval_internal(double const angle)
 	{
 		double ret= angle * M_1_PI;
@@ -323,7 +303,7 @@ struct ModFunctionTriangle : ModFunctionWave
 	}
 };
 
-static ModFunction* create_field_mod(ModManager* man, lua_State* L, int index)
+static ModFunction* create_field_mod(ModifiableValue* parent, ModManager* man, lua_State* L, int index)
 {
 	lua_rawgeti(L, index, 1);
 	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1);
@@ -332,25 +312,25 @@ static ModFunction* create_field_mod(ModManager* man, lua_State* L, int index)
 	switch(type)
 	{
 		case MFT_Constant:
-			ret= new ModFunctionConstant(man);
+			ret= new ModFunctionConstant(parent, man);
 			break;
 		case MFT_Product:
-			ret= new ModFunctionProduct(man);
+			ret= new ModFunctionProduct(parent, man);
 			break;
 		case MFT_Power:
-			ret= new ModFunctionPower(man);
+			ret= new ModFunctionPower(parent, man);
 			break;
 		case MFT_Log:
-			ret= new ModFunctionLog(man);
+			ret= new ModFunctionLog(parent, man);
 			break;
 		case MFT_Sine:
-			ret= new ModFunctionSine(man);
+			ret= new ModFunctionSine(parent, man);
 			break;
 		case MFT_Square:
-			ret= new ModFunctionSquare(man);
+			ret= new ModFunctionSquare(parent, man);
 			break;
 		case MFT_Triangle:
-			ret= new ModFunctionTriangle(man);
+			ret= new ModFunctionTriangle(parent, man);
 			break;
 		default:
 			return nullptr;
@@ -365,47 +345,57 @@ ModifiableValue::~ModifiableValue()
 	clear_mods();
 }
 
-void ModifiableValue::set_manager(ModManager* man)
-{
-	m_manager= man;
-}
-
 double ModifiableValue::evaluate(mod_val_inputs const& input)
 {
 	double sum= m_value.get_value();
 	for(auto&& mod : m_mods)
 	{
-		sum+= mod->evaluate(input);
+		sum+= mod.second->evaluate(input);
 	}
 	return sum;
 }
 
-void ModifiableValue::add_mod(lua_State* L, int index)
+ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 {
-	ModFunction* new_mod= create_field_mod(m_manager, L, index);
+	ModFunction* new_mod= create_field_mod(this, m_manager, L, index);
 	if(new_mod == nullptr)
 	{
 		LuaHelpers::ReportScriptError("Problem creating modifier: unknown type.");
-		return;
+		return nullptr;
 	}
-	m_mods.push_back(new_mod);
+	ModFunction* ret= nullptr;
+	auto mod= m_mods.find(new_mod->get_name());
+	if(mod == m_mods.end())
+	{
+		m_mods.insert(make_pair(new_mod->get_name(), new_mod));
+		ret= new_mod;
+	}
+	else
+	{
+		(*(mod->second)) = (*new_mod);
+		delete new_mod;
+		ret= mod->second;
+	}
+	return ret;
 }
 
-ModFunction* ModifiableValue::get_mod(size_t index)
+ModFunction* ModifiableValue::get_mod(std::string const& name)
 {
-	if(index < m_mods.size())
+	auto mod= m_mods.find(name);
+	if(mod != m_mods.end())
 	{
-		return m_mods[index];
+		return mod->second;
 	}
 	return nullptr;
 }
 
-void ModifiableValue::remove_mod(size_t index)
+void ModifiableValue::remove_mod(std::string const& name)
 {
-	if(index < m_mods.size())
+	auto mod= m_mods.find(name);
+	if(mod != m_mods.end())
 	{
-		delete m_mods[index];
-		m_mods.erase(m_mods.begin() + index);
+		delete mod->second;
+		m_mods.erase(mod);
 	}
 }
 
@@ -413,7 +403,7 @@ void ModifiableValue::clear_mods()
 {
 	for(auto&& mod : m_mods)
 	{
-		delete mod;
+		delete mod.second;
 	}
 	m_mods.clear();
 }
@@ -535,9 +525,9 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 		p->add_mod(L, lua_gettop(L));
 		COMMON_RETURN_SELF;
 	}
-	static int get_mod(T* p, lua_State* L)
+	static int add_get_mod(T* p, lua_State* L)
 	{
-		ModFunction* mod= p->get_mod(static_cast<size_t>(IArg(1)));
+		ModFunction* mod= p->add_mod(L, lua_gettop(L));
 		if(mod == nullptr)
 		{
 			lua_pushnil(L);
@@ -548,14 +538,22 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 		}
 		return 1;
 	}
-	static int num_mods(T* p, lua_State* L)
+	static int get_mod(T* p, lua_State* L)
 	{
-		lua_pushnumber(L, p->num_mods());
+		ModFunction* mod= p->get_mod(SArg(1));
+		if(mod == nullptr)
+		{
+			lua_pushnil(L);
+		}
+		else
+		{
+			mod->PushSelf(L);
+		}
 		return 1;
 	}
 	static int remove_mod(T* p, lua_State* L)
 	{
-		p->remove_mod(static_cast<size_t>(IArg(1)));
+		p->remove_mod(SArg(1));
 		COMMON_RETURN_SELF;
 	}
 	static int clear_mods(T* p, lua_State* L)
@@ -571,8 +569,8 @@ struct LunaModifiableValue : Luna<ModifiableValue>
 	LunaModifiableValue()
 	{
 		ADD_METHOD(add_mod);
+		ADD_METHOD(add_get_mod);
 		ADD_METHOD(get_mod);
-		ADD_METHOD(num_mods);
 		ADD_METHOD(remove_mod);
 		ADD_METHOD(clear_mods);
 		ADD_METHOD(get_value);

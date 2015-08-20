@@ -37,14 +37,14 @@ NewFieldColumn::NewFieldColumn()
 	 m_note_alpha(&m_mod_manager, 1.0), m_note_glow(&m_mod_manager, 0.0),
 	 m_receptor_alpha(&m_mod_manager, 1.0), m_receptor_glow(&m_mod_manager, 0.0),
 	 m_explosion_alpha(&m_mod_manager, 1.0), m_explosion_glow(&m_mod_manager, 0.0),
-	 m_curr_beat(0.0f), m_curr_second(0.0),
+	 m_curr_beat(0.0f), m_curr_second(0.0), m_prev_curr_second(-1000.0),
 	 m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
 	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
 {
-	m_quantization_multiplier.get_value().set_value_instant(1.0);
+	m_quantization_multiplier.m_value= 1.0;
 	double default_offset= SCREEN_CENTER_Y - note_size;
-	m_reverse_offset_pixels.get_value().set_value_instant(default_offset);
+	m_reverse_offset_pixels.m_value= default_offset;
 }
 
 NewFieldColumn::~NewFieldColumn()
@@ -69,21 +69,51 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_newskin= newskin;
 	m_note_data= note_data;
 	m_timing_data= timing_data;
-	m_column_mod.pos_mod.x_mod.get_value().set_value_instant(x);
+	m_column_mod.pos_mod.x_mod.m_value= x;
 	m_use_game_music_beat= true;
 	first_note_visible_prev_frame= m_note_data->end(column);
+
+	m_mod_manager.column= column;
+
+	for(auto&& moddable : {&m_quantization_multiplier, &m_quantization_offset,
+				&m_speed_mod, &m_reverse_offset_pixels, &m_reverse_percent,
+				&m_center_percent, &m_note_alpha, &m_note_glow, &m_receptor_alpha,
+				&m_receptor_glow, &m_explosion_alpha, &m_explosion_glow})
+	{
+		moddable->set_timing(timing_data);
+	}
+	for(auto&& moddable : {&m_note_mod, &m_column_mod})
+	{
+		moddable->set_timing(timing_data);
+	}
 
 	add_heads_from_layers(column, m_heads_below_notes, skin_data.m_layers_below_notes);
 	add_heads_from_layers(column, m_heads_above_notes, skin_data.m_layers_above_notes);
 }
 
-void NewFieldColumn::update_displayed_beat(double beat, double second)
+void NewFieldColumn::set_displayed_time(double beat, double second)
+{
+	m_curr_beat= beat;
+	m_curr_second= second;
+	m_mod_manager.update(second);
+}
+
+void NewFieldColumn::update_displayed_time(double beat, double second)
 {
 	if(m_use_game_music_beat)
 	{
-		m_curr_beat= beat;
-		m_curr_second= second;
+		set_displayed_time(beat, second);
 	}
+}
+
+void NewFieldColumn::set_displayed_beat(double beat)
+{
+	set_displayed_time(beat, m_timing_data->GetElapsedTimeFromBeat(beat));
+}
+
+void NewFieldColumn::set_displayed_second(double second)
+{
+	set_displayed_time(m_timing_data->GetBeatFromElapsedTime(second), second);
 }
 
 double NewFieldColumn::calc_y_offset(double beat, double second)
@@ -129,7 +159,6 @@ void NewFieldColumn::UpdateInternal(float delta)
 		m_curr_beat+= delta;
 		m_curr_second= m_timing_data->GetElapsedTimeFromBeat(m_curr_beat);
 	}
-	m_mod_manager.update(delta);
 	calc_reverse_shift();
 	for(auto&& head : m_heads_below_notes)
 	{
@@ -512,6 +541,30 @@ bool NewFieldColumn::EarlyAbortDraw() const
 	return m_newskin == nullptr || m_note_data == nullptr || m_timing_data == nullptr;
 }
 
+void NewFieldColumn::imitate_did_note(TapNote const& tap)
+{
+	if(m_use_game_music_beat)
+	{
+		return;
+	}
+	double judged_time= tap.occurs_at_second + tap.result.fTapNoteOffset;
+	bool prev_diff_over_zero= (m_prev_curr_second - judged_time > 0);
+	bool curr_diff_over_zero= (m_curr_second - judged_time > 0);
+	if(prev_diff_over_zero != curr_diff_over_zero)
+	{
+		// Pass false for the bright arg because it is not stored when the note
+		// is hit.
+		if(tap.type == TapNoteType_HoldHead)
+		{
+			did_hold_note_internal(tap.HoldResult.hns, false);
+		}
+		else
+		{
+			did_tap_note_internal(tap.result.tns, false);
+		}
+	}
+}
+
 void NewFieldColumn::update_upcoming(double beat, double second)
 {
 	double const beat_dist= beat - m_curr_beat;
@@ -525,7 +578,8 @@ void NewFieldColumn::update_upcoming(double beat, double second)
 
 void NewFieldColumn::update_active_hold(TapNote const& tap)
 {
-	if(tap.subType != TapNoteSubType_Invalid && tap.HoldResult.bActive)
+	if(tap.subType != TapNoteSubType_Invalid && tap.HoldResult.bActive &&
+		tap.occurs_at_second <= m_curr_second && tap.end_second >= m_curr_second)
 	{
 		m_status.active_hold= &tap;
 	}
@@ -535,7 +589,7 @@ void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_be
 {
 	double const last_held_beat= tap.HoldResult.GetLastHeldBeat();
 	double const last_held_second= tap.HoldResult.last_held_second;
-	if(last_held_second > tap.occurs_at_second)
+	if(last_held_second > tap.occurs_at_second && m_use_game_music_beat)
 	{
 		if(fabs(last_held_second - m_curr_second) < .01)
 		{
@@ -567,8 +621,9 @@ void NewFieldColumn::build_render_lists()
 	m_status.prev_active_hold= m_status.active_hold;
 	m_status.active_hold= nullptr;
 
+	double time_diff= m_curr_second - m_prev_curr_second;
 	NoteData::TrackMap::const_iterator column_end= m_note_data->end(m_column);
-	if(first_note_visible_prev_frame == column_end)
+	if(first_note_visible_prev_frame == column_end || time_diff < 0)
 	{
 		NoteData::TrackMap::const_iterator discard;
 		double first_beat= m_timing_data->GetBeatFromElapsedTime(m_curr_second - 1.0);
@@ -610,20 +665,22 @@ void NewFieldColumn::build_render_lists()
 			case TapNoteType_Attack:
 			case TapNoteType_AutoKeysound:
 			case TapNoteType_Fake:
-				if(!tn.result.bHidden)
+				if(!tn.result.bHidden || !m_use_game_music_beat)
 				{
 					render_taps.push_back(curr_note);
+					imitate_did_note(tn);
 					update_upcoming(tap_beat, tn.occurs_at_second);
 					update_active_hold(tn);
 				}
 				break;
 			case TapNoteType_HoldHead:
-				if(tn.HoldResult.hns != HNS_Held)
+				if(tn.HoldResult.hns != HNS_Held || !m_use_game_music_beat)
 				{
 					// Hold heads are added to the tap list to take care of rendering
 					// heads and tails in the same phase as taps.
 					render_taps.push_back(curr_note);
 					render_holds.push_back(curr_note);
+					imitate_did_note(tn);
 					update_upcoming(tap_beat, tn.occurs_at_second);
 					update_active_hold(tn);
 				}
@@ -633,6 +690,7 @@ void NewFieldColumn::build_render_lists()
 		}
 	}
 	first_note_visible_prev_frame= first_visible_this_frame;
+	m_prev_curr_second= m_curr_second;
 
 	set_note_upcoming(m_status.upcoming_beat_dist, m_status.upcoming_second_dist);
 	// The hold status should be updated if there is a currently active hold
@@ -872,18 +930,34 @@ void NewFieldColumn::pass_message_to_heads(Message& msg)
 	}
 }
 
-void NewFieldColumn::did_tap_note(TapNoteScore tns, bool bright)
+void NewFieldColumn::did_tap_note_internal(TapNoteScore tns, bool bright)
 {
 	Message msg(create_did_message(bright));
 	msg.SetParam("tap_note_score", tns);
 	pass_message_to_heads(msg);
 }
 
-void NewFieldColumn::did_hold_note(HoldNoteScore hns, bool bright)
+void NewFieldColumn::did_hold_note_internal(HoldNoteScore hns, bool bright)
 {
 	Message msg(create_did_message(bright));
 	msg.SetParam("hold_note_score", hns);
 	pass_message_to_heads(msg);
+}
+
+void NewFieldColumn::did_tap_note(TapNoteScore tns, bool bright)
+{
+	if(m_use_game_music_beat)
+	{
+		did_tap_note_internal(tns, bright);
+	}
+}
+
+void NewFieldColumn::did_hold_note(HoldNoteScore hns, bool bright)
+{
+	if(m_use_game_music_beat)
+	{
+		did_hold_note_internal(hns, bright);
+	}
 }
 
 void NewFieldColumn::set_hold_status(TapNote const* tap, bool start, bool end)
@@ -957,7 +1031,6 @@ NewField::~NewField()
 
 void NewField::UpdateInternal(float delta)
 {
-	m_mod_manager.update(delta);
 	for(auto&& col : m_columns)
 	{
 		col.Update(delta);
@@ -1086,7 +1159,9 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 	m_timing_data= timing;
 	m_columns.clear();
 	m_columns.resize(m_note_data->GetNumTracks());
-	// Temporary until styles are removed.
+	m_trans_mod.set_timing(timing);
+	// The column needs all of this info.  fXOffset might come from somewhere
+	// else when styles are removed.
 	for(size_t i= 0; i < m_columns.size(); ++i)
 	{
 		m_columns[i].set_column_info(i, m_newskin.get_column(i), m_newskin,
@@ -1094,13 +1169,14 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 	}
 }
 
-void NewField::update_displayed_beat(double beat, double second)
+void NewField::update_displayed_time(double beat, double second)
 {
 	m_curr_beat= beat;
 	m_curr_second= second;
+	m_mod_manager.update(second);
 	for(auto&& col : m_columns)
 	{
-		col.update_displayed_beat(beat, second);
+		col.update_displayed_time(beat, second);
 	}
 }
 
@@ -1169,6 +1245,27 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_MEMBER(receptor_glow);
 	GET_MEMBER(explosion_alpha);
 	GET_MEMBER(explosion_glow);
+	GET_SET_BOOL_METHOD(use_game_music_beat, m_use_game_music_beat);
+	static int get_curr_beat(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_curr_beat());
+		return 1;
+	}
+	static int set_curr_beat(T* p, lua_State* L)
+	{
+		p->set_displayed_beat(FArg(1));
+		COMMON_RETURN_SELF;
+	}
+	static int get_curr_second(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_curr_second());
+		return 1;
+	}
+	static int set_curr_second(T* p, lua_State* L)
+	{
+		p->set_displayed_second(FArg(1));
+		COMMON_RETURN_SELF;
+	}
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
@@ -1185,6 +1282,9 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_METHOD(get_receptor_glow);
 		ADD_METHOD(get_explosion_alpha);
 		ADD_METHOD(get_explosion_glow);
+		ADD_GET_SET_METHODS(use_game_music_beat);
+		ADD_GET_SET_METHODS(curr_beat);
+		ADD_GET_SET_METHODS(curr_second);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);

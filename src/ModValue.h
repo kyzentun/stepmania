@@ -2,104 +2,61 @@
 #define MOD_VALUE_H
 
 #include <initializer_list>
+#include <list>
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
 #include "RageTypes.h"
+#include "TimingData.h"
 
 struct lua_State;
-struct ModManager;
+struct ModFunction;
+struct ModifiableValue;
 
-struct ApproachingValue
-{
-	ApproachingValue(ModManager* man, double v)
-		:parent(man), value(v), speed(0.0), goal(v)
-	{}
-	~ApproachingValue()
-	{
-		remove_from_update_list();
-	}
-	void update(double delta)
-	{
-		// not using rage's fapproach because it asserts on negative speed, and
-		// I want that to be possible.
-		if(value == goal)
-		{
-			remove_from_update_list();
-			return;
-		}
-		double const dist= goal - value;
-		double const sign= dist / fabsf(dist);
-		double change= sign * speed * delta;
-		if(fabsf(change) > fabsf(dist))
-		{
-			value= goal;
-			remove_from_update_list();
-			return;
-		}
-		value+= change;
-	}
-	void add_to_update_list();
-	void remove_from_update_list();
-#define GENERIC_GET_SET(member) \
-	double get_##member() { return member; } \
-	void set_##member(double v) { add_to_update_list(); member= v; }
-
-	GENERIC_GET_SET(value);
-	GENERIC_GET_SET(speed);
-	GENERIC_GET_SET(goal);
-#undef GENERIC_GET_SET
-	void set_value_instant(double v)
-	{
-		value= goal= v;
-		remove_from_update_list();
-	}
-
-	void set_manager(ModManager* man)
-	{
-		parent= man;
-	}
-
-	virtual void PushSelf(lua_State* L);
-
-private:
-	ModManager* parent;
-	double value;
-	double speed;
-	double goal;
-};
+// invalid_modfunction_time exists so that the loading code can tell when a
+// start or end time was provided.
+static const double invalid_modfunction_time= -1000.0;
 
 struct ModManager
 {
-	void update(double delta)
+	size_t column;
+	struct func_and_parent
 	{
-		for(auto&& mod : m_mods_to_update)
-		{
-			mod->update(delta);
-		}
-		for(auto&& mod : m_delayed_remove_update_list)
-		{
-			auto entry= m_mods_to_update.find(mod);
-			if(entry != m_mods_to_update.end())
-			{
-				m_mods_to_update.erase(entry);
-			}
-		}
-		m_delayed_remove_update_list.clear();
-	}
-	void add_to_list(ApproachingValue* mod)
-	{
-		m_mods_to_update.insert(mod);
-	}
-	void remove_from_list(ApproachingValue* mod)
-	{
-		m_delayed_remove_update_list.push_back(mod);
-	}
+		ModFunction* func;
+		ModifiableValue* parent;
+		func_and_parent() {}
+		func_and_parent(ModFunction* f, ModifiableValue* p)
+			:func(f), parent(p)
+		{}
+	};
+	ModManager()
+		:m_prev_curr_second(invalid_modfunction_time)
+	{}
+	void update(double curr_second);
+	void add_mod(ModFunction* func, ModifiableValue* parent);
+	void remove_mod(ModFunction* func);
+	void remove_all_mods(ModifiableValue* parent);
+
+	void dump_list_status();
+
 private:
-	std::unordered_set<ApproachingValue*> m_mods_to_update;
-	std::vector<ApproachingValue*> m_delayed_remove_update_list;
+	void insert_into_past(ModFunction* func, ModifiableValue* parent);
+	void insert_into_present(ModFunction* func, ModifiableValue* parent);
+	void insert_into_future(ModFunction* func, ModifiableValue* parent);
+#define INSERT_FAP(time_name) \
+	void insert_into_##time_name(func_and_parent& fap) \
+	{ insert_into_##time_name(fap.func, fap.parent); }
+	INSERT_FAP(past);
+	INSERT_FAP(present);
+	INSERT_FAP(future);
+#undef INSERT_FAP
+
+	double m_prev_curr_second;
+	std::list<func_and_parent> m_past_funcs;
+	std::list<func_and_parent> m_present_funcs;
+	std::list<func_and_parent> m_future_funcs;
 };
 
 struct mod_val_inputs
@@ -120,6 +77,30 @@ struct mod_val_inputs
 	{}
 };
 
+struct mod_time_inputs
+{
+	double const start_dist_beat;
+	double const start_dist_second;
+	double const end_dist_beat;
+	double const end_dist_second;
+	// Use this constructor to set all to zero.
+	mod_time_inputs(double zero)
+		:start_dist_beat(zero), start_dist_second(zero),
+		end_dist_beat(zero), end_dist_second(zero)
+	{}
+#define PART_DIFF(result, after, before, type) \
+		result##_dist_##type(after##_##type - before##_##type)
+#define BS_DIFF(result, after, before) \
+		PART_DIFF(result, after, before, beat), \
+		PART_DIFF(result, after, before, second)
+	mod_time_inputs(double start_beat, double start_second, double curr_beat,
+		double curr_second, double end_beat, double end_second)
+		: BS_DIFF(start, curr, start), BS_DIFF(end, end, curr)
+	{}
+#undef BS_DIFF
+#undef PART_DIFF
+};
+
 enum ModInputType
 {
 	MIT_Scalar,
@@ -130,6 +111,10 @@ enum ModInputType
 	MIT_DistBeat,
 	MIT_DistSecond,
 	MIT_YOffset,
+	MIT_StartDistBeat,
+	MIT_StartDistSecond,
+	MIT_EndDistBeat,
+	MIT_EndDistSecond,
 	NUM_ModInputType,
 	ModInputType_Invalid
 };
@@ -139,8 +124,8 @@ LuaDeclareType(ModInputType);
 struct ModInput
 {
 	ModInputType m_type;
-	ApproachingValue m_scalar;
-	ApproachingValue m_offset;
+	double m_scalar;
+	double m_offset;
 
 	// The input value can be passed through a couple of modifiers to change
 	// its range.  These modifiers are applied before the scalar and offset.
@@ -160,8 +145,8 @@ struct ModInput
 	//     input is .25, result is 1.25.
 	//     input is -.25, result is 1.75.
 	bool m_rep_enabled;
-	ApproachingValue m_rep_begin;
-	ApproachingValue m_rep_end;
+	double m_rep_begin;
+	double m_rep_end;
 	// The unce modifier. (I could not think of a name.  Send suggestions)
 	// If input is less than unce_begin, it returns unce_before.
 	// If input is equal to or greater than unce_begin and less than unce_end,
@@ -178,17 +163,17 @@ struct ModInput
 	//     input is 1.9, result is 1.8
 	//     input is 2, result is 3.
 	bool m_unce_enabled;
-	ApproachingValue m_unce_before;
-	ApproachingValue m_unce_begin;
-	ApproachingValue m_unce_during;
-	ApproachingValue m_unce_end;
-	ApproachingValue m_unce_after;
+	double m_unce_before;
+	double m_unce_begin;
+	double m_unce_during;
+	double m_unce_end;
+	double m_unce_after;
 
-	ModInput(ModManager* man)
-		:m_type(MIT_Scalar), m_scalar(man, 0.0), m_offset(man, 0.0),
-		m_rep_enabled(false), m_rep_begin(man, 0.0), m_rep_end(man, 0.0),
-		m_unce_enabled(false), m_unce_before(man, 0.0), m_unce_begin(man, 0.0),
-		m_unce_during(man, 0.0), m_unce_end(man, 0.0), m_unce_after(man, 0.0)
+	ModInput()
+		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0),
+		m_rep_enabled(false), m_rep_begin(0.0), m_rep_end(0.0),
+		m_unce_enabled(false), m_unce_before(0.0), m_unce_begin(0.0),
+		m_unce_during(0.0), m_unce_end(0.0), m_unce_after(0.0)
 	{}
 	void clear();
 	void load_from_lua(lua_State* L, int index);
@@ -198,15 +183,13 @@ struct ModInput
 		{
 			return input;
 		}
-		double const rep_begin= m_rep_begin.get_value();
-		double const rep_end= m_rep_end.get_value();
-		double const dist= rep_end - rep_begin;
+		double const dist= m_rep_end - m_rep_begin;
 		double const mod_res= fmod(input, dist);
 		if(mod_res < 0.0)
 		{
-			return mod_res + dist + rep_begin;
+			return mod_res + dist + m_rep_begin;
 		}
-		return mod_res + rep_begin;
+		return mod_res + m_rep_begin;
 	}
 	double apply_unce(double input)
 	{
@@ -214,22 +197,24 @@ struct ModInput
 		{
 			return input;
 		}
-		double const unce_begin= m_unce_begin.get_value();
-		if(input < unce_begin)
+		if(input < m_unce_begin)
 		{
-			return m_unce_before.get_value();
+			return m_unce_before;
 		}
-		if(input < m_unce_end.get_value())
+		if(input < m_unce_end)
 		{
-			return (input - unce_begin) * m_unce_during.get_value();
+			return (input - m_unce_begin) * m_unce_during;
 		}
-		return m_unce_after.get_value();
+		return m_unce_after;
 	}
-	double pick(mod_val_inputs const& input)
+	double pick(mod_val_inputs const& input, mod_time_inputs const& time)
 	{
 		double ret= 1.0;
 		switch(m_type)
 		{
+			case MIT_Scalar:
+				ret= 1.0;
+				break;
 			case MIT_EvalBeat:
 				ret= input.eval_beat;
 				break;
@@ -251,12 +236,23 @@ struct ModInput
 			case MIT_YOffset:
 				ret= input.y_offset;
 				break;
-			case MIT_Scalar:
+			case MIT_StartDistBeat:
+				ret= time.start_dist_beat;
+				break;
+			case MIT_StartDistSecond:
+				ret= time.start_dist_second;
+				break;
+			case MIT_EndDistBeat:
+				ret= time.end_dist_beat;
+				break;
+			case MIT_EndDistSecond:
+				ret= time.end_dist_second;
+				break;
 			default:
 				break;
 		}
 		ret= apply_unce(apply_rep(ret));
-		return (ret * m_scalar.get_value()) + m_offset.get_value();
+		return (ret * m_scalar) + m_offset;
 	}
 	virtual void PushSelf(lua_State* L);
 };
@@ -276,21 +272,35 @@ enum ModFunctionType
 const RString& ModFunctionTypeToString(ModFunctionType fmt);
 LuaDeclareType(ModFunctionType);
 
-struct ModifiableValue;
-
 struct ModFunction
 {
 	ModFunction(ModifiableValue* parent)
-		:m_parent(parent)
+		:m_start_beat(invalid_modfunction_time),
+		m_start_second(invalid_modfunction_time),
+		m_end_beat(invalid_modfunction_time),
+		m_end_second(invalid_modfunction_time),
+		m_parent(parent)
 	{}
 	virtual ~ModFunction() {}
+
+	void calc_unprovided_times(TimingData const* timing);
 
 	std::string const& get_name() { return m_name; }
 
 	virtual void update(double delta) { UNUSED(delta); }
-	virtual double evaluate(mod_val_inputs const& input)
+	double evaluate(mod_val_inputs const& input)
+	{
+		return sub_evaluate(input, mod_time_inputs(0.0));
+	}
+	double evaluate_with_time(mod_val_inputs const& input)
+	{
+		return sub_evaluate(input, mod_time_inputs(m_start_beat, m_start_second,
+				input.music_beat, input.music_second, m_end_beat, m_end_second));
+	}
+	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
 	{
 		UNUSED(input);
+		UNUSED(time);
 		return 0.0;
 	}
 	virtual void load_from_lua(lua_State* L, int index)
@@ -306,6 +316,11 @@ struct ModFunction
 	virtual size_t num_inputs() { return 0; }
 	virtual void PushSelf(lua_State* L);
 
+	double m_start_beat;
+	double m_start_second;
+	double m_end_beat;
+	double m_end_second;
+
 protected:
 	void push_inputs_internal(lua_State* L, int table_index,
 		std::initializer_list<ModInput*> inputs)
@@ -319,31 +334,7 @@ protected:
 		}
 	}
 	void load_inputs_from_lua(lua_State* L, int index,
-		std::vector<ModInput*> inputs)
-	{
-		// The lua table looks like this:
-		// {type, input, ...}
-		// The ... is for the inputs after the first.
-		// So the first input is at lua table index 2.
-		lua_getfield(L, index, "name");
-		if(lua_isstring(L, -1))
-		{
-			m_name= lua_tostring(L, -1);
-		}
-		else
-		{
-			m_name= unique_name("mod");
-		}
-		lua_pop(L, 1);
-		size_t elements= lua_objlen(L, index);
-		size_t limit= std::min(elements, inputs.size()+2);
-		for(size_t el= 2; el <= limit; ++el)
-		{
-			lua_rawgeti(L, index, el);
-			inputs[el-2]->load_from_lua(L, lua_gettop(L));
-			lua_pop(L, 1);
-		}
-	}
+		std::vector<ModInput*> inputs);
 
 	std::string m_name;
 	ModifiableValue* m_parent;
@@ -352,22 +343,37 @@ protected:
 struct ModifiableValue
 {
 	ModifiableValue(ModManager* man, double value)
-		:m_manager(man), m_value(man, value)
+		:m_value(value), m_manager(man), m_timing(nullptr)
 	{}
 	~ModifiableValue();
+	void set_timing(TimingData const* timing)
+	{
+		m_timing= timing;
+	}
 	double evaluate(mod_val_inputs const& input);
 	ModFunction* add_mod(lua_State* L, int index);
 	ModFunction* get_mod(std::string const& name);
 	void remove_mod(std::string const& name);
 	void clear_mods();
 
-	ApproachingValue& get_value() { return m_value; }
+	ModFunction* add_managed_mod(lua_State* L, int index);
+	ModFunction* get_managed_mod(std::string const& name);
+	void remove_managed_mod(std::string const& name);
+	void clear_managed_mods();
+	void add_mod_to_active_list(ModFunction* mod);
+	void remove_mod_from_active_list(ModFunction* mod);
 
 	virtual void PushSelf(lua_State* L);
+
+	double m_value;
 private:
+	ModFunction* add_mod_internal(lua_State* L, int index);
+
 	ModManager* m_manager;
-	ApproachingValue m_value;
+	TimingData const* m_timing;
 	std::unordered_map<std::string, ModFunction*> m_mods;
+	std::unordered_map<std::string, ModFunction*> m_managed_mods;
+	std::unordered_set<ModFunction*> m_active_managed_mods;
 };
 
 struct ModifiableVector3
@@ -381,6 +387,12 @@ struct ModifiableVector3
 		out.y= y_mod.evaluate(input);
 		out.z= z_mod.evaluate(input);
 	}
+	void set_timing(TimingData const* timing)
+	{
+		x_mod.set_timing(timing);
+		y_mod.set_timing(timing);
+		z_mod.set_timing(timing);
+	}
 	ModifiableValue x_mod;
 	ModifiableValue y_mod;
 	ModifiableValue z_mod;
@@ -391,6 +403,12 @@ struct ModifiableTransform
 	ModifiableTransform(ModManager* man)
 		:pos_mod(man, 0.0), rot_mod(man, 0.0), zoom_mod(man, 1.0)
 	{}
+	void set_timing(TimingData const* timing)
+	{
+		pos_mod.set_timing(timing);
+		rot_mod.set_timing(timing);
+		zoom_mod.set_timing(timing);
+	}
 	void evaluate(mod_val_inputs const& input, transform& out)
 	{
 		pos_mod.evaluate(input, out.pos);

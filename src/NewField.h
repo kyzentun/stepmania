@@ -41,7 +41,15 @@ struct NewFieldColumn : ActorFrame
 	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
 	void draw_hold(QuantizedHoldRenderData& data, double head_beat,
 		double head_second, double tail_beat, double tail_second);
-	void update_displayed_beat(double beat, double second);
+	void set_displayed_time(double beat, double second);
+	// update_displayed_time is called by the field when the Player draws in
+	// gameplay.  set_displayed_beat is for lua to call when lua is controlling
+	// the current beat.
+	void update_displayed_time(double beat, double second);
+	double get_curr_beat() { return m_curr_beat; }
+	double get_curr_second() { return m_curr_second; }
+	void set_displayed_beat(double beat);
+	void set_displayed_second(double second);
 	bool y_offset_visible(double off)
 	{
 		return off >= first_y_offset_visible && off <= last_y_offset_visible;
@@ -87,6 +95,7 @@ struct NewFieldColumn : ActorFrame
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
+	void imitate_did_note(TapNote const& tap);
 	void update_upcoming(double beat, double second);
 	void update_active_hold(TapNote const& tap);
 	virtual void DrawPrimitives();
@@ -109,6 +118,9 @@ struct NewFieldColumn : ActorFrame
 	column_status m_status;
 
 	ModManager m_mod_manager;
+	// If you add another ModifiableValue member, be sure to add it to the
+	// loop in set_column_info.  They need to have the timing data passed to
+	// them so mods can have start and end times.
 	ModifiableValue m_quantization_multiplier;
 	ModifiableValue m_quantization_offset;
 
@@ -129,8 +141,12 @@ struct NewFieldColumn : ActorFrame
 	ModifiableValue m_explosion_glow;
 
 private:
+	void did_tap_note_internal(TapNoteScore tns, bool bright);
+	void did_hold_note_internal(HoldNoteScore hns, bool bright);
+
 	double m_curr_beat;
 	double m_curr_second;
+	double m_prev_curr_second;
 	double m_pixels_visible_before_beat;
 	double m_pixels_visible_after_beat;
 	size_t m_column;
@@ -181,7 +197,7 @@ struct NewField : ActorFrame
 	void set_steps(Steps* data);
 	void set_note_data(NoteData* note_data, TimingData* timing, Style const* curr_style);
 
-	void update_displayed_beat(double beat, double second);
+	void update_displayed_time(double beat, double second);
 
 	void did_tap_note(size_t column, TapNoteScore tns, bool bright);
 	void did_hold_note(size_t column, HoldNoteScore hns, bool bright);

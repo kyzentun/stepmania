@@ -1577,7 +1577,7 @@ void Player::DrawPrimitives()
 	if(m_new_field != nullptr)
 	{
 		SongPosition const& disp_pos= m_pPlayerState->GetDisplayedPosition();
-		m_new_field->update_displayed_beat(disp_pos.m_fSongBeatVisible, disp_pos.m_fMusicSecondsVisible);
+		m_new_field->update_displayed_time(disp_pos.m_fSongBeatVisible, disp_pos.m_fMusicSecondsVisible);
 	}
 
 	// May have both players in doubles (for battle play); only draw primary player.

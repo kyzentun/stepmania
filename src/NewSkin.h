@@ -168,12 +168,22 @@ enum TexCoordFlipMode
 const RString& TexCoordFlipModeToString(TexCoordFlipMode tcfm);
 LuaDeclareType(TexCoordFlipMode);
 
+struct hold_part_lengths
+{
+	double start_note_offset;
+	double end_note_offset;
+	double head_pixs;
+	double body_pixs;
+	double tail_pixs;
+};
+
 struct QuantizedHoldRenderData
 {
 	QuantizedHoldRenderData() { clear(); }
 	std::vector<RageTexture*> parts;
 	RectF const* rect;
 	TexCoordFlipMode flip;
+	hold_part_lengths part_lengths;
 	void clear()
 	{
 		parts.clear();
@@ -188,6 +198,7 @@ struct QuantizedHold
 	std::vector<RageTexture*> m_parts;
 	TexCoordFlipMode m_flip;
 	bool m_vivid;
+	hold_part_lengths m_part_lengths;
 	void get_quantized(double quantization, double beat, QuantizedHoldRenderData& ret)
 	{
 		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
@@ -200,6 +211,7 @@ struct QuantizedHold
 			}
 		}
 		ret.flip= m_flip;
+		ret.part_lengths= m_part_lengths;
 	}
 	bool load_from_lua(lua_State* L, int index, std::string const& load_dir, std::string& insanity_diagnosis);
 };

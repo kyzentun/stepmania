@@ -333,6 +333,24 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, string const& load_di
 			m_flip= TCFM_None;
 		}
 	}
+	lua_getfield(L, index, "length_data");
+	if(lua_istable(L, -1))
+	{
+		int length_data_index= lua_gettop(L);
+		m_part_lengths.start_note_offset= get_optional_double(L, length_data_index, "start_note_offset", -.5);
+		m_part_lengths.end_note_offset= get_optional_double(L, length_data_index, "end_note_offset", .5);
+		m_part_lengths.head_pixs= get_optional_double(L, length_data_index, "head_pixs", 32.0);
+		m_part_lengths.body_pixs= get_optional_double(L, length_data_index, "body_pixs", 64.0);
+		m_part_lengths.tail_pixs= get_optional_double(L, length_data_index, "tail_pixs", 32.0);
+	}
+	else
+	{
+		m_part_lengths.start_note_offset= -.5;
+		m_part_lengths.end_note_offset= .5;
+		m_part_lengths.head_pixs= 32.0;
+		m_part_lengths.body_pixs= 64.0;
+		m_part_lengths.tail_pixs= 32.0;
+	}
 	lua_getfield(L, index, "vivid");
 	m_vivid= lua_toboolean(L, -1);
 #undef RETURN_NOT_SANE

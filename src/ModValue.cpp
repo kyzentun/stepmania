@@ -320,18 +320,6 @@ void ModInput::load_from_lua(lua_State* L, int index)
 	}
 }
 
-static double get_optional_double(lua_State* L, int index, char const* field)
-{
-	double ret= invalid_modfunction_time;
-	lua_getfield(L, index, field);
-	if(lua_isnumber(L, -1))
-	{
-		ret= lua_tonumber(L, -1);
-	}
-	lua_pop(L, 1);
-	return ret;
-}
-
 void ModFunction::load_inputs_from_lua(lua_State* L, int index,
 		std::vector<ModInput*> inputs)
 {
@@ -357,10 +345,10 @@ void ModFunction::load_inputs_from_lua(lua_State* L, int index,
 		m_name= unique_name("mod");
 	}
 	lua_pop(L, 1);
-	m_start_beat= get_optional_double(L, index, "start_beat");
-	m_start_second= get_optional_double(L, index, "start_second");
-	m_end_beat= get_optional_double(L, index, "end_beat");
-	m_end_second= get_optional_double(L, index, "end_second");
+	m_start_beat= get_optional_double(L, index, "start_beat", invalid_modfunction_time);
+	m_start_second= get_optional_double(L, index, "start_second", invalid_modfunction_time);
+	m_end_beat= get_optional_double(L, index, "end_beat", invalid_modfunction_time);
+	m_end_second= get_optional_double(L, index, "end_second", invalid_modfunction_time);
 	size_t elements= lua_objlen(L, index);
 	size_t limit= std::min(elements, inputs.size()+2);
 	for(size_t el= 2; el <= limit; ++el)

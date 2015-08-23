@@ -254,9 +254,8 @@ struct hold_texture_handler
 	double tex_top;
 	double tex_bottom;
 	double tex_rect_h;
-	double tex_cap_height;
 	double tex_body_height;
-	double tex_cap_end;
+	double tex_top_end;
 	double tex_body_end;
 	double tex_per_y;
 	double start_y;
@@ -264,25 +263,34 @@ struct hold_texture_handler
 	double body_end_y;
 	double end_y;
 	// Things that will be changed/updated each time.
-	double prev_partial;
+	double prev_bodies_left;
 	int prev_phase;
 	bool started_bottom;
-	hold_texture_handler(double const note_size, double const head_y, double const tail_y, double const tex_t, double const tex_b)
+	hold_texture_handler(double const note_size, double const head_y,
+		double const tail_y, double const tex_t, double const tex_b,
+		QuantizedHoldRenderData const& data)
 	{
+		double pix_h_recip= 1.0 / (data.part_lengths.head_pixs +
+			data.part_lengths.body_pixs + data.part_lengths.body_pixs +
+			data.part_lengths.tail_pixs);
+		double head_pct= data.part_lengths.head_pixs * pix_h_recip;
+		double body_pct= data.part_lengths.body_pixs * pix_h_recip;
+		double tail_pct= data.part_lengths.tail_pixs * pix_h_recip;
 		tex_top= tex_t;
 		tex_bottom= tex_b;
 		tex_rect_h= tex_bottom - tex_top;
-		tex_cap_height= tex_rect_h / 6.0;
-		tex_body_height= tex_rect_h / 3.0;
-		tex_cap_end= tex_top + tex_cap_height;
-		tex_body_end= tex_bottom - tex_cap_height;
-		tex_per_y= tex_body_height / note_size;
-		start_y= head_y - (note_size * .5);
+		tex_per_y= tex_rect_h * pix_h_recip;
+		double tex_top_height= tex_rect_h * head_pct;
+		tex_body_height= tex_rect_h * body_pct;
+		double tex_bottom_height= tex_rect_h * tail_pct;
+		tex_top_end= tex_top + tex_top_height;
+		tex_body_end= tex_bottom - tex_bottom_height;
+		start_y= head_y + (note_size * data.part_lengths.start_note_offset);
 		body_start_y= head_y;
-		body_end_y= tail_y;
-		end_y= body_end_y + (note_size * .5);
+		end_y= tail_y + (note_size * data.part_lengths.end_note_offset);
+		body_end_y= end_y - data.part_lengths.tail_pixs;
 		// constants go above this line.
-		prev_partial= 2.0;
+		prev_bodies_left= 1.0;
 		prev_phase= HTP_Top;
 		started_bottom= false;
 	}
@@ -345,24 +353,16 @@ private:
 				{
 					double const tex_distance= (body_end_y - curr_y) * tex_per_y;
 					// bodies_left decreases as more of the hold is drawn.
-					double const bodies_left= tex_distance / tex_body_height;
+					double bodies_left= tex_distance / tex_body_height;
 					double const floor_left= floor(bodies_left);
-					// Renge-chan of bodies_left - floor_left: (1.0, 0.0]
-					// Renge-chan that we need: [0.0, 1.0)
-					double partial= 1.0 - (bodies_left - floor_left);
-					if(partial == 1.0)
-					{
-						partial= 0.0;
-					}
-					double curr_tex_y= tex_cap_end + (partial * tex_body_height);
-					// When rendering in the body phase, detect when the body is being
-					// repeated and insert an extra tex coord to cover the seam.
-					if(partial < prev_partial)
+					bodies_left= (bodies_left - floor_left) + 1.0;
+					double curr_tex_y= tex_body_end - (bodies_left * tex_body_height);
+					if(bodies_left > prev_bodies_left)
 					{
 						ret_texc.push_back(curr_tex_y + tex_body_height);
 					}
 					ret_texc.push_back(curr_tex_y);
-					prev_partial= partial;
+					prev_bodies_left= bodies_left;
 				}
 				break;
 			case HTP_Bottom:
@@ -429,7 +429,7 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 	double y_off_len= tail_y_offset - head_y_offset;
 	hold_time_lerper beat_lerper(head_y_offset, y_off_len, head_beat, tail_beat - head_beat);
 	hold_time_lerper second_lerper(head_y_offset, y_off_len, head_second, tail_second - head_second);
-	hold_texture_handler tex_handler(note_size, head_y_offset, tail_y_offset, tex_top, tex_bottom);
+	hold_texture_handler tex_handler(note_size, head_y_offset, tail_y_offset, tex_top, tex_bottom, data);
 	double const body_start_render_y= apply_reverse_shift(tex_handler.body_start_y);
 	double const body_end_render_y= apply_reverse_shift(tex_handler.body_end_y);
 	double const tex_center= (tex_left + tex_right) * .5;

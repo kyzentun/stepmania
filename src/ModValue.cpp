@@ -350,7 +350,7 @@ void ModFunction::load_inputs_from_lua(lua_State* L, int index,
 	m_end_beat= get_optional_double(L, index, "end_beat", invalid_modfunction_time);
 	m_end_second= get_optional_double(L, index, "end_second", invalid_modfunction_time);
 	size_t elements= lua_objlen(L, index);
-	size_t limit= std::min(elements, inputs.size()+2);
+	size_t limit= std::min(elements, inputs.size()+1);
 	for(size_t el= 2; el <= limit; ++el)
 	{
 		lua_rawgeti(L, index, el);

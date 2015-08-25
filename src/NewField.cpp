@@ -120,7 +120,20 @@ void NewFieldColumn::set_displayed_second(double second)
 
 double NewFieldColumn::calc_y_offset(double beat, double second)
 {
-	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
+	double note_beat= beat;
+	double curr_beat= m_curr_displayed_beat;
+	if(m_scroll_segments_enabled)
+	{
+		if(beat == m_curr_beat)
+		{
+			note_beat= m_curr_displayed_beat;
+		}
+		else
+		{
+			note_beat= m_timing_data->GetDisplayedBeat(note_beat);
+		}
+	}
+	mod_val_inputs input(note_beat, second, curr_beat, m_curr_second);
 	double ret= note_size * m_speed_mod.evaluate(input);
 	if(m_speed_segments_enabled)
 	{
@@ -611,6 +624,11 @@ void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_be
 
 void NewFieldColumn::build_render_lists()
 {
+	m_curr_displayed_beat= m_curr_beat;
+	if(m_scroll_segments_enabled)
+	{
+		m_curr_displayed_beat= m_timing_data->GetDisplayedBeat(m_curr_beat);
+	}
 	mod_val_inputs input(m_curr_beat, m_curr_second);
 	transform trans;
 	m_column_mod.evaluate(input, trans);

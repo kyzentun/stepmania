@@ -160,6 +160,7 @@ private:
 	void did_hold_note_internal(HoldNoteScore hns, bool bright);
 
 	double m_curr_beat;
+	double m_curr_displayed_beat;
 	double m_curr_second;
 	double m_prev_curr_second;
 	double m_pixels_visible_before_beat;

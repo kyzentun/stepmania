@@ -65,6 +65,18 @@ struct NewFieldColumn : ActorFrame
 		return y_offset_visible(calc_y_offset(beat, note.occurs_at_second));
 	}
 	double calc_y_offset(double beat, double second);
+	double head_y_offset()
+	{
+		return calc_y_offset(m_curr_beat, m_curr_second);
+	}
+	double get_reverse_shift()
+	{
+		return reverse_shift;
+	}
+	double get_reverse_scale()
+	{
+		return reverse_scale;
+	}
 	double quantization_for_time(mod_val_inputs& input)
 	{
 		double mult= m_quantization_multiplier.evaluate(input);
@@ -104,6 +116,9 @@ struct NewFieldColumn : ActorFrame
 	virtual NewFieldColumn* Copy() const;
 
 	bool m_use_game_music_beat;
+	bool m_show_unjudgable_notes;
+	bool m_speed_segments_enabled;
+	bool m_scroll_segments_enabled;
 
 	struct column_status
 	{

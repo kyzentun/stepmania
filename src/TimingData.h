@@ -123,6 +123,15 @@ public:
 	typedef std::vector<lookup_item_t> beat_start_lookup_t;
 	beat_start_lookup_t m_beat_start_lookup;
 	beat_start_lookup_t m_time_start_lookup;
+	// displayed_beat_entry is for optimizing GetDisplayedBeat, which is used
+	// by scroll segments.
+	struct displayed_beat_entry
+	{
+		float beat;
+		float displayed_beat;
+		float velocity;
+	};
+	std::vector<displayed_beat_entry> m_displayed_beat_lookup;
 	// m_lookup_requester_count exists to track how many things have requested
 	// the lookup tables be prepared, so unrelated parts of code don't have to
 	// check for them.

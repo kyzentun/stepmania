@@ -27,9 +27,11 @@ static const double note_size= 64.0;
 REGISTER_ACTOR_CLASS(NewFieldColumn);
 
 NewFieldColumn::NewFieldColumn()
-	:m_quantization_multiplier(&m_mod_manager, 1.0),
+	:m_show_unjudgable_notes(true),
+	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
+	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
-	 m_speed_mod(&m_mod_manager, 1.0),
+	 m_speed_mod(&m_mod_manager, 0.0),
 	 m_reverse_offset_pixels(&m_mod_manager, 0.0),
 	 m_reverse_percent(&m_mod_manager, 0.0),
 	 m_center_percent(&m_mod_manager, 0.0),
@@ -119,7 +121,12 @@ void NewFieldColumn::set_displayed_second(double second)
 double NewFieldColumn::calc_y_offset(double beat, double second)
 {
 	mod_val_inputs input(beat, second, m_curr_beat, m_curr_second);
-	return note_size * m_speed_mod.evaluate(input);
+	double ret= note_size * m_speed_mod.evaluate(input);
+	if(m_speed_segments_enabled)
+	{
+		ret*= m_timing_data->GetDisplayedSpeedPercent(m_curr_beat, m_curr_second);
+	}
+	return ret;
 }
 
 void NewFieldColumn::calc_transform(mod_val_inputs& input, transform& trans)
@@ -154,11 +161,6 @@ double NewFieldColumn::apply_reverse_shift(double y_offset)
 
 void NewFieldColumn::UpdateInternal(float delta)
 {
-	if(!m_use_game_music_beat)
-	{
-		m_curr_beat+= delta;
-		m_curr_second= m_timing_data->GetElapsedTimeFromBeat(m_curr_beat);
-	}
 	calc_reverse_shift();
 	for(auto&& head : m_heads_below_notes)
 	{
@@ -614,6 +616,11 @@ void NewFieldColumn::build_render_lists()
 	m_column_mod.evaluate(input, trans);
 	set_transform(trans);
 
+	// Clearing and rebuilding the list of taps to render every frame is
+	// unavoidable because the notes move every frame, which changes the y
+	// offset, which changes what is visible.  So even if the list wasn't
+	// cleared, it would still have to be traversed to recalculate the y
+	// offsets every frame.
 	render_holds.clear();
 	render_taps.clear();
 	m_status.upcoming_beat_dist= 1000.0;
@@ -665,7 +672,8 @@ void NewFieldColumn::build_render_lists()
 			case TapNoteType_Attack:
 			case TapNoteType_AutoKeysound:
 			case TapNoteType_Fake:
-				if(!tn.result.bHidden || !m_use_game_music_beat)
+				if((!tn.result.bHidden || !m_use_game_music_beat) &&
+					(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
 				{
 					render_taps.push_back(curr_note);
 					imitate_did_note(tn);
@@ -674,7 +682,8 @@ void NewFieldColumn::build_render_lists()
 				}
 				break;
 			case TapNoteType_HoldHead:
-				if(tn.HoldResult.hns != HNS_Held || !m_use_game_music_beat)
+				if((tn.HoldResult.hns != HNS_Held || !m_use_game_music_beat) &&
+					(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
 				{
 					// Hold heads are added to the tap list to take care of rendering
 					// heads and tails in the same phase as taps.
@@ -729,8 +738,7 @@ void NewFieldColumn::draw_things_in_step(render_step step)
 
 void NewFieldColumn::draw_heads_internal(vector<column_head>& heads, bool receptors)
 {
-	double const y_offset= apply_reverse_shift(
-		calc_y_offset(m_curr_beat, m_curr_second));
+	double const y_offset= apply_reverse_shift(head_y_offset());
 	mod_val_inputs input(m_curr_beat, m_curr_second, m_curr_beat, m_curr_second);
 	double alpha= 1.0;
 	double glow= 0.0;
@@ -825,7 +833,7 @@ void NewFieldColumn::draw_taps_internal()
 			case TapNoteType_HoldHead:
 				part= NewSkinTapPart_Invalid;
 				get_hold_draw_time(tn, tap_beat, head_beat, head_second);
-				tail_beat= m_curr_beat + NoteRowToBeat(tn.iDuration);
+				tail_beat= tap_beat + NoteRowToBeat(tn.iDuration);
 				switch(tn.subType)
 				{
 					case TapNoteSubType_Hold:
@@ -1246,6 +1254,9 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_MEMBER(explosion_alpha);
 	GET_MEMBER(explosion_glow);
 	GET_SET_BOOL_METHOD(use_game_music_beat, m_use_game_music_beat);
+	GET_SET_BOOL_METHOD(show_unjudgable_notes, m_show_unjudgable_notes);
+	GET_SET_BOOL_METHOD(speed_segments_enabled, m_speed_segments_enabled);
+	GET_SET_BOOL_METHOD(scroll_segments_enabled, m_scroll_segments_enabled);
 	static int get_curr_beat(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->get_curr_beat());
@@ -1266,6 +1277,21 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		p->set_displayed_second(FArg(1));
 		COMMON_RETURN_SELF;
 	}
+	static int receptor_y_offset(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->head_y_offset());
+		return 1;
+	}
+	static int get_reverse_shift(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_reverse_shift());
+		return 1;
+	}
+	static int get_reverse_scale(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_reverse_scale());
+		return 1;
+	}
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
@@ -1283,8 +1309,14 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_METHOD(get_explosion_alpha);
 		ADD_METHOD(get_explosion_glow);
 		ADD_GET_SET_METHODS(use_game_music_beat);
+		ADD_GET_SET_METHODS(show_unjudgable_notes);
+		ADD_GET_SET_METHODS(speed_segments_enabled);
+		ADD_GET_SET_METHODS(scroll_segments_enabled);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
+		ADD_METHOD(receptor_y_offset);
+		ADD_METHOD(get_reverse_shift);
+		ADD_METHOD(get_reverse_scale);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);

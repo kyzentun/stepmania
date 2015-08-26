@@ -412,7 +412,9 @@ static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	verts_to_draw.add_vert(right, color, glow_color, RageVector2(tex_right, tex_y));
 }
 
-void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, double head_second, double tail_beat, double tail_second)
+void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
+	render_note const& note, double head_beat, double head_second,
+	double tail_beat, double tail_second)
 {
 	// pos_z_vec will be used later to orient the hold.  Read below. -Kyz
 	static const RageVector3 pos_z_vec(0.0f, 0.0f, 1.0f);
@@ -439,8 +441,8 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data, double head_beat, 
 		default:
 			break;
 	}
-	double head_y_offset= calc_y_offset(head_beat, head_second);
-	double tail_y_offset= calc_y_offset(tail_beat, tail_second);
+	double head_y_offset= note.y_offset;
+	double tail_y_offset= note.tail_y_offset;
 	double y_off_len= tail_y_offset - head_y_offset;
 	hold_time_lerper beat_lerper(head_y_offset, y_off_len, head_beat, tail_beat - head_beat);
 	hold_time_lerper second_lerper(head_y_offset, y_off_len, head_second, tail_second - head_second);
@@ -622,6 +624,45 @@ void NewFieldColumn::get_hold_draw_time(TapNote const& tap, double const hold_be
 	second= tap.occurs_at_second;
 }
 
+NewFieldColumn::render_note::render_note(NewFieldColumn* column, NoteData::TrackMap::const_iterator column_end, NoteData::TrackMap::const_iterator iter)
+{
+	note_iter= column_end;
+	double beat= NoteRowToBeat(iter->first);
+	if(iter->second.type == TapNoteType_HoldHead)
+	{
+		double hold_draw_beat;
+		double hold_draw_second;
+		column->get_hold_draw_time(iter->second, beat, hold_draw_beat, hold_draw_second);
+		y_offset= column->calc_y_offset(hold_draw_beat, hold_draw_second);
+		tail_y_offset= column->calc_y_offset(beat + NoteRowToBeat(iter->second.iDuration), iter->second.end_second);
+		int head_visible= column->y_offset_visible(y_offset);
+		int tail_visible= column->y_offset_visible(tail_y_offset);
+		// y_offset_visible returns 3 possible things:
+		// -1 (before first), 0 (in range), 1 (after last)
+		// If the head is off the top, and the tail is off the bottom, then
+		// head_visible is -1 and tail_visible is 1, but the hold needs to be
+		// drawn.
+		// value table time. I means invisible, D means draw.
+		//     -1 | 0 | 1
+		// -1 | I | D | D
+		//  0 | D | D | D
+		//  1 | D | D | I
+		// Thus, this weird condition.
+		if(head_visible + tail_visible != 2 && head_visible + tail_visible != -2)
+		{
+			note_iter= iter;
+		}
+	}
+	else
+	{
+		y_offset= column->calc_y_offset(beat, iter->second.occurs_at_second);
+		if(column->y_offset_visible(y_offset) == 0)
+		{
+			note_iter= iter;
+		}
+	}
+}
+
 void NewFieldColumn::build_render_lists()
 {
 	m_curr_displayed_beat= m_curr_beat;
@@ -664,12 +705,47 @@ void NewFieldColumn::build_render_lists()
 		int tap_row= curr_note->first;
 		double tap_beat= NoteRowToBeat(tap_row);
 		const TapNote& tn= curr_note->second;
-		bool visible= note_visible(tn, tap_beat);
-		if(visible)
+		render_note renderable(this, column_end, curr_note);
+		if(renderable.note_iter != column_end)
 		{
 			if(first_visible_this_frame == column_end)
 			{
 				first_visible_this_frame= curr_note;
+			}
+			switch(tn.type)
+			{
+				case TapNoteType_Empty:
+					continue;
+				case TapNoteType_Tap:
+				case TapNoteType_Mine:
+				case TapNoteType_Lift:
+				case TapNoteType_Attack:
+				case TapNoteType_AutoKeysound:
+				case TapNoteType_Fake:
+					if((!tn.result.bHidden || !m_use_game_music_beat) &&
+						(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
+					{
+						render_taps.push_back(renderable);
+						imitate_did_note(tn);
+						update_upcoming(tap_beat, tn.occurs_at_second);
+						update_active_hold(tn);
+					}
+					break;
+				case TapNoteType_HoldHead:
+					if((tn.HoldResult.hns != HNS_Held || !m_use_game_music_beat) &&
+						(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
+					{
+						// Hold heads are added to the tap list to take care of rendering
+						// heads and tails in the same phase as taps.
+						render_taps.push_back(renderable);
+						render_holds.push_back(renderable);
+						imitate_did_note(tn);
+						update_upcoming(tap_beat, tn.occurs_at_second);
+						update_active_hold(tn);
+					}
+					break;
+				default:
+					break;
 			}
 		}
 		else
@@ -679,41 +755,6 @@ void NewFieldColumn::build_render_lists()
 			{
 				found_end_of_visible_notes= true;
 			}
-		}
-		switch(tn.type)
-		{
-			case TapNoteType_Empty:
-				continue;
-			case TapNoteType_Tap:
-			case TapNoteType_Mine:
-			case TapNoteType_Lift:
-			case TapNoteType_Attack:
-			case TapNoteType_AutoKeysound:
-			case TapNoteType_Fake:
-				if((!tn.result.bHidden || !m_use_game_music_beat) &&
-					(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
-				{
-					render_taps.push_back(curr_note);
-					imitate_did_note(tn);
-					update_upcoming(tap_beat, tn.occurs_at_second);
-					update_active_hold(tn);
-				}
-				break;
-			case TapNoteType_HoldHead:
-				if((tn.HoldResult.hns != HNS_Held || !m_use_game_music_beat) &&
-					(m_show_unjudgable_notes || m_timing_data->IsJudgableAtBeat(tap_beat)))
-				{
-					// Hold heads are added to the tap list to take care of rendering
-					// heads and tails in the same phase as taps.
-					render_taps.push_back(curr_note);
-					render_holds.push_back(curr_note);
-					imitate_did_note(tn);
-					update_upcoming(tap_beat, tn.occurs_at_second);
-					update_active_hold(tn);
-				}
-				break;
-			default:
-				break;
 		}
 	}
 	first_note_visible_prev_frame= first_visible_this_frame;
@@ -791,9 +832,8 @@ void NewFieldColumn::draw_holds_internal()
 		// The hold loop does not need to call update_upcoming or
 		// update_active_hold beccause the tap loop handles them when drawing
 		// heads.
-		int hold_row= holdit->first;
-		TapNote const& tn= holdit->second;
-		double const hold_beat= NoteRowToBeat(hold_row);
+		TapNote const& tn= holdit.note_iter->second;
+		double const hold_beat= NoteRowToBeat(holdit.note_iter->first);
 		double const hold_second= tn.occurs_at_second;
 		mod_val_inputs input(hold_beat, hold_second, m_curr_beat, m_curr_second, calc_y_offset(hold_beat, hold_second));
 		double const quantization= quantization_for_time(input);
@@ -806,7 +846,7 @@ void NewFieldColumn::draw_holds_internal()
 		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
 		{
-			draw_hold(data, hold_draw_beat, hold_draw_second, hold_draw_beat + NoteRowToBeat(tn.iDuration) - passed_amount, tn.end_second);
+			draw_hold(data, holdit, hold_draw_beat, hold_draw_second, hold_draw_beat + NoteRowToBeat(tn.iDuration) - passed_amount, tn.end_second);
 		}
 	}
 }
@@ -827,9 +867,8 @@ void NewFieldColumn::draw_taps_internal()
 	double const beat= m_curr_beat - floor(m_curr_beat);
 	for(auto&& tapit : render_taps)
 	{
-		int tap_row= tapit->first;
-		TapNote const& tn= tapit->second;
-		double const tap_beat= NoteRowToBeat(tap_row);
+		TapNote const& tn= tapit.note_iter->second;
+		double const tap_beat= NoteRowToBeat(tapit.note_iter->first);
 		double const tap_second= tn.occurs_at_second;
 		NewSkinTapPart part= NSTP_Tap;
 		NewSkinTapOptionalPart head_part= NewSkinTapOptionalPart_Invalid;
@@ -884,8 +923,8 @@ void NewFieldColumn::draw_taps_internal()
 		{
 			head_second= tn.occurs_at_second;
 			acts[0].draw_beat= head_beat;
-			acts[0].y_offset= calc_y_offset(head_beat, head_second);
-			if(y_offset_visible(acts[0].y_offset))
+			acts[0].y_offset= tapit.y_offset;
+			if(y_offset_visible(acts[0].y_offset) == 0)
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
 				double const quantization= quantization_for_time(mod_input);
@@ -898,8 +937,8 @@ void NewFieldColumn::draw_taps_internal()
 			tail_second= tn.end_second;
 			// Put tails on the list first because they need to be under the heads.
 			acts[0].draw_beat= tail_beat;
-			acts[0].y_offset= calc_y_offset(tail_beat, tail_second);
-			if(y_offset_visible(acts[0].y_offset))
+			acts[0].y_offset= tapit.tail_y_offset;
+			if(y_offset_visible(acts[0].y_offset) == 0)
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
 				double const quantization= quantization_for_time(mod_input);
@@ -907,8 +946,8 @@ void NewFieldColumn::draw_taps_internal()
 				acts[0].draw_second= tail_second;
 			}
 			acts[1].draw_beat= head_beat;
-			acts[1].y_offset= calc_y_offset(head_beat, head_second);
-			if(y_offset_visible(acts[1].y_offset))
+			acts[1].y_offset= tapit.y_offset;
+			if(y_offset_visible(acts[1].y_offset) == 0)
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[1].y_offset);
 				double const quantization= quantization_for_time(mod_input);

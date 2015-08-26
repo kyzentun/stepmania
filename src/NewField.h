@@ -32,6 +32,13 @@ struct NewFieldColumn : ActorFrame
 			frame.AddChild(actor);
 		}
 	};
+	struct render_note
+	{
+		render_note(NewFieldColumn* column, NoteData::TrackMap::const_iterator column_end, NoteData::TrackMap::const_iterator iter);
+		double y_offset;
+		double tail_y_offset;
+		NoteData::TrackMap::const_iterator note_iter;
+	};
 	void add_heads_from_layers(size_t column, std::vector<column_head>& heads,
 		std::vector<NewSkinLayer>& layers);
 	void set_column_info(size_t column, NewSkinColumn* newskin,
@@ -39,8 +46,9 @@ struct NewFieldColumn : ActorFrame
 		const NoteData* note_data, const TimingData* timing_data, double x);
 
 	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
-	void draw_hold(QuantizedHoldRenderData& data, double head_beat,
-		double head_second, double tail_beat, double tail_second);
+	void draw_hold(QuantizedHoldRenderData& data, render_note const& note,
+		double head_beat, double head_second,
+		double tail_beat, double tail_second);
 	void set_displayed_time(double beat, double second);
 	// update_displayed_time is called by the field when the Player draws in
 	// gameplay.  set_displayed_beat is for lua to call when lua is controlling
@@ -50,19 +58,11 @@ struct NewFieldColumn : ActorFrame
 	double get_curr_second() { return m_curr_second; }
 	void set_displayed_beat(double beat);
 	void set_displayed_second(double second);
-	bool y_offset_visible(double off)
+	int y_offset_visible(double off)
 	{
-		return off >= first_y_offset_visible && off <= last_y_offset_visible;
-	}
-	bool note_visible(TapNote const& note, double const beat)
-	{
-		if(note.type == TapNoteType_HoldHead)
-		{
-			return y_offset_visible(calc_y_offset(beat, note.occurs_at_second)) ||
-				y_offset_visible(calc_y_offset(beat + NoteRowToBeat(note.iDuration),
-						note.end_second));
-		}
-		return y_offset_visible(calc_y_offset(beat, note.occurs_at_second));
+		if(off < first_y_offset_visible) { return -1; }
+		if(off > last_y_offset_visible) { return 1; }
+		return 0;
 	}
 	double calc_y_offset(double beat, double second);
 	double head_y_offset()
@@ -182,8 +182,8 @@ private:
 	void draw_holds_internal();
 	void draw_taps_internal();
 	NoteData::TrackMap::const_iterator first_note_visible_prev_frame;
-	std::vector<NoteData::TrackMap::const_iterator> render_holds;
-	std::vector<NoteData::TrackMap::const_iterator> render_taps;
+	std::vector<render_note> render_holds;
+	std::vector<render_note> render_taps;
 	render_step curr_render_step;
 	// Calculating the effects of reverse and center for every note is costly.
 	// Only do it once per frame and store the result.

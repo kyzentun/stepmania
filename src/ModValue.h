@@ -131,7 +131,7 @@ struct ModInput
 	// its range.  These modifiers are applied before the scalar and offset.
 	// So it works like this:
 	//   result= apply_rep_mod(input)
-	//   result= apply_unce_mod(result)
+	//   result= apply_phase_mod(result)
 	//   return (result * scalar) + offset
 	// These input modifiers are necessary for mods like beat and hidden,
 
@@ -147,36 +147,52 @@ struct ModInput
 	bool m_rep_enabled;
 	double m_rep_begin;
 	double m_rep_end;
-	// The unce modifier. (I could not think of a name.  Send suggestions)
-	// If input is less than unce_begin, it returns unce_before.
-	// If input is equal to or greater than unce_begin and less than unce_end,
-	//   it returns (input - unce_begin) * unce_during.
-	// If input is equal to or greater than unce_end, it returns unce_after.
+	// The phase modifier applies a multiplier and an offset in its range.
+	// Equation: result= ((input - phase_start) * multiplier) + offset
+	// The range includes the beginning, but not the end.
+	// Input outside its range is not modified.
+	// A ModInput can have multiple phases to simplify creating mods that need
+	// multiple phases. (say, when beat ramps up the amplitude on a sine wave,
+	// then ramps it down.  Between beats is one phase, ramp up is another, and
+	// ramp down is a third.)
+	// If two phases overlap, the one that is used is undefined.
 	// Example:
-	//   unce_before is 0.
-	//   unce_begin is 1.
-	//   unce_during is 2.
-	//   unce_end is 2.
-	//   unce_after is 3.
-	//     input is .9, result is 0 (unce_before)
-	//     input is 1.1, result is .2 (1.1 minus 1 is .1, .1 times 2 is .2)
-	//     input is 1.9, result is 1.8
-	//     input is 2, result is 3.
-	bool m_unce_enabled;
-	double m_unce_before;
-	double m_unce_begin;
-	double m_unce_during;
-	double m_unce_end;
-	double m_unce_after;
+	//   phase start is .5.
+	//   phase finish is 1.
+	//   phase mult is 2.
+	//   phase offset is .5.
+	//     input is .4, result is .4 (outside the phase).
+	//     input is .5, result is .5 (.5 - .5 is 0, 0 * 2 is 0, 0 + .5 is .5)
+	//     input is .6, result is .7 (.6 - .5 is .1, .1 * 2 is .2, .2 + .5 is .7)
+	//     input is 1, result is 1 (outside the phase).
+	bool m_phases_enabled;
+	struct phase
+	{
+		phase()
+			:start(0.0), finish(0.0), mult(1.0), offset(0.0)
+		{}
+		double start;
+		double finish;
+		double mult;
+		double offset;
+	};
+	std::vector<phase> m_phases;
+	phase m_default_phase;
 
 	ModInput()
 		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0),
 		m_rep_enabled(false), m_rep_begin(0.0), m_rep_end(0.0),
-		m_unce_enabled(false), m_unce_before(0.0), m_unce_begin(0.0),
-		m_unce_during(0.0), m_unce_end(0.0), m_unce_after(0.0)
+		m_phases_enabled(false)
 	{}
 	void clear();
+	void push_phase(lua_State* L, size_t phase);
+	void push_def_phase(lua_State* L);
+	void load_rep(lua_State* L, int index);
+	void load_one_phase(lua_State* L, int index, size_t phase);
+	void load_def_phase(lua_State* L, int index);
+	void load_phases(lua_State* L, int index);
 	void load_from_lua(lua_State* L, int index);
+	phase const* find_phase(double input);
 	double apply_rep(double input)
 	{
 		if(!m_rep_enabled)
@@ -191,21 +207,14 @@ struct ModInput
 		}
 		return mod_res + m_rep_begin;
 	}
-	double apply_unce(double input)
+	double apply_phase(double input)
 	{
-		if(!m_unce_enabled)
+		if(!m_phases_enabled)
 		{
 			return input;
 		}
-		if(input < m_unce_begin)
-		{
-			return m_unce_before;
-		}
-		if(input < m_unce_end)
-		{
-			return (input - m_unce_begin) * m_unce_during;
-		}
-		return m_unce_after;
+		phase const* curr= find_phase(input);
+		return ((input - curr->start) * curr->mult) + curr->offset;
 	}
 	double pick(mod_val_inputs const& input, mod_time_inputs const& time)
 	{
@@ -251,7 +260,7 @@ struct ModInput
 			default:
 				break;
 		}
-		ret= apply_unce(apply_rep(ret));
+		ret= apply_phase(apply_rep(ret));
 		return (ret * m_scalar) + m_offset;
 	}
 	virtual void PushSelf(lua_State* L);

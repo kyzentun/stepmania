@@ -58,6 +58,14 @@ struct NewFieldColumn : ActorFrame
 	double get_curr_second() { return m_curr_second; }
 	void set_displayed_beat(double beat);
 	void set_displayed_second(double second);
+	void set_pixels_visible_before(double pix)
+	{
+		m_pixels_visible_before_beat= pix;
+	}
+	void set_pixels_visible_after(double pix)
+	{
+		m_pixels_visible_after_beat= pix;
+	}
 	int y_offset_visible(double off)
 	{
 		if(off < first_y_offset_visible) { return -1; }

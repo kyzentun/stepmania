@@ -255,12 +255,86 @@ void ModInput::clear()
 	m_rep_enabled= false;
 	m_rep_begin= 0.0;
 	m_rep_end= 0.0;
-	m_unce_enabled= false;
-	m_unce_before= 0.0;
-	m_unce_begin= 0.0;
-	m_unce_during= 0.0;
-	m_unce_end= 0.0;
-	m_unce_after= 0.0;
+	m_phases_enabled= false;
+	m_phases.clear();
+}
+
+static void get_numbers(lua_State* L, int index, vector<double*> const& ret)
+{
+	for(size_t i= 0; i < ret.size(); ++i)
+	{
+		lua_rawgeti(L, index, i+1);
+		(*ret[i]) = lua_tonumber(L, -1);
+		lua_pop(L, 1);
+	}
+}
+
+static void push_numbers(lua_State* L, vector<double*> const& noms)
+{
+	lua_createtable(L, noms.size(), 0);
+	for(size_t i= 0; i < noms.size(); ++i)
+	{
+		lua_pushnumber(L, *noms[i]);
+		lua_rawseti(L, -2, i+1);
+	}
+}
+
+void ModInput::push_phase(lua_State* L, size_t phase)
+{
+	push_numbers(L, {&m_phases[phase].start, &m_phases[phase].finish,
+					&m_phases[phase].mult, &m_phases[phase].offset});
+}
+
+void ModInput::push_def_phase(lua_State* L)
+{
+	push_numbers(L, {&m_default_phase.start, &m_default_phase.finish,
+					&m_default_phase.mult, &m_default_phase.offset});
+}
+
+void ModInput::load_rep(lua_State* L, int index)
+{
+	if(lua_istable(L, index))
+	{
+		m_rep_enabled= true;
+		get_numbers(L, index, {&m_rep_begin, &m_rep_end});
+	}
+}
+
+void ModInput::load_one_phase(lua_State* L, int index, size_t phase)
+{
+	if(lua_istable(L, index))
+	{
+		get_numbers(L, index, {&m_phases[phase].start, &m_phases[phase].finish,
+					&m_phases[phase].mult, &m_phases[phase].offset});
+	}
+}
+
+void ModInput::load_def_phase(lua_State* L, int index)
+{
+	if(lua_istable(L, index))
+	{
+		get_numbers(L, index, {&m_default_phase.start, &m_default_phase.finish,
+					&m_default_phase.mult, &m_default_phase.offset});
+	}
+}
+
+void ModInput::load_phases(lua_State* L, int index)
+{
+	if(lua_istable(L, index))
+	{
+		m_phases_enabled= true;
+		lua_getfield(L, index, "default");
+		load_def_phase(L, lua_gettop(L));
+		lua_pop(L, 1);
+		size_t num_phases= lua_objlen(L, index);
+		m_phases.resize(num_phases);
+		for(size_t i= 0; i < num_phases; ++i)
+		{
+			lua_rawgeti(L, index, i+1);
+			load_one_phase(L, lua_gettop(L), i);
+			lua_pop(L, 1);
+		}
+	}
 }
 
 void ModInput::load_from_lua(lua_State* L, int index)
@@ -285,39 +359,67 @@ void ModInput::load_from_lua(lua_State* L, int index)
 		m_offset= lua_tonumber(L, -1);
 		lua_pop(L, 1);
 		lua_getfield(L, index, "rep");
-		if(lua_istable(L, -1))
-		{
-			m_rep_enabled= true;
-			lua_rawgeti(L, -1, 1);
-			m_rep_begin= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-			lua_rawgeti(L, -1, 2);
-			m_rep_end= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-		}
+		load_rep(L, lua_gettop(L));
 		lua_pop(L, 1);
-		lua_getfield(L, index, "unce");
-		if(lua_istable(L, -1))
-		{
-			m_unce_enabled= true;
-			lua_rawgeti(L, -1, 1);
-			m_unce_before= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-			lua_rawgeti(L, -1, 2);
-			m_unce_begin= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-			lua_rawgeti(L, -1, 3);
-			m_unce_during= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-			lua_rawgeti(L, -1, 4);
-			m_unce_end= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-			lua_rawgeti(L, -1, 5);
-			m_unce_after= lua_tonumber(L, -1);
-			lua_pop(L, 1);
-		}
+		lua_getfield(L, index, "phases");
+		load_phases(L, lua_gettop(L));
 		lua_pop(L, 1);
 	}
+}
+
+ModInput::phase const* ModInput::find_phase(double input)
+{
+	if(m_phases.empty() || input < m_phases.front().start || input >= m_phases.back().finish)
+	{
+		return &m_default_phase;
+	}
+	// Every time I have to do a binary search, there's some odd wrinkle that
+	// forces the implementation to be different.  In this case, input is not
+	// guaranteed to be in phase.  For example, if the phase ranges are [0, 1),
+	// [2, 3), and the input is 1.5, then no phase should be applied.
+	size_t lower= 0;
+	size_t upper= m_phases.size()-1;
+	if(input < m_phases[lower].finish)
+	{
+		return &m_phases[lower];
+	}
+	if(input >= m_phases[upper].start)
+	{
+		return &m_phases[upper];
+	}
+	while(lower != upper)
+	{
+		size_t mid= (upper + lower) / 2;
+		if(input < m_phases[mid].start)
+		{
+			if(mid > lower)
+			{
+				if(input >= m_phases[mid-1].finish)
+				{
+					return &m_default_phase;
+				}
+			}
+			else
+			{
+				return &m_default_phase;
+			}
+			upper= mid;
+		}
+		else if(input >= m_phases[mid].finish)
+		{
+			// mid is mathematically guaranteed to be less than upper.
+			if(input < m_phases[mid+1].start)
+			{
+				return &m_default_phase;
+			}
+			lower= mid;
+		}
+		else
+		{
+			return &m_phases[mid];
+		}
+	}
+	return &m_phases[lower];
 }
 
 void ModFunction::load_inputs_from_lua(lua_State* L, int index,
@@ -757,14 +859,10 @@ struct LunaModInput : Luna<ModInput>
 	GET_SET_FLOAT_METHOD(scalar, m_scalar);
 	GET_SET_FLOAT_METHOD(offset, m_offset);
 	GET_SET_BOOL_METHOD(rep_enabled, m_rep_enabled);
-	GET_SET_BOOL_METHOD(unce_enabled, m_unce_enabled);
+	GET_SET_BOOL_METHOD(phases_enabled, m_phases_enabled);
 	static int get_rep(T* p, lua_State* L)
 	{
-		lua_createtable(L, 2, 0);
-		lua_pushnumber(L, p->m_rep_begin);
-		lua_rawseti(L, -2, 1);
-		lua_pushnumber(L, p->m_rep_end);
-		lua_rawseti(L, -2, 2);
+		push_numbers(L, {&p->m_rep_begin, &p->m_rep_end});
 		return 1;
 	}
 	static int set_rep(T* p, lua_State* L)
@@ -773,61 +871,92 @@ struct LunaModInput : Luna<ModInput>
 		{
 			luaL_error(L, "Arg for ModInput:set_rep must be a table of two numbers.");
 		}
-		lua_rawgeti(L, 1, 1);
-		p->m_rep_begin= FArg(-1);
-		lua_pop(L, 1);
-		lua_rawgeti(L, 1, 2);
-		p->m_rep_end= FArg(-1);
-		lua_pop(L, 1);
+		p->load_rep(L, 1);
 		COMMON_RETURN_SELF;
 	}
-	static int get_unce(T* p, lua_State* L)
+	static int get_all_phases(T* p, lua_State* L)
 	{
-		lua_createtable(L, 2, 0);
-		lua_pushnumber(L, p->m_unce_before);
-		lua_rawseti(L, -2, 1);
-		lua_pushnumber(L, p->m_unce_begin);
-		lua_rawseti(L, -2, 2);
-		lua_pushnumber(L, p->m_unce_during);
-		lua_rawseti(L, -2, 3);
-		lua_pushnumber(L, p->m_unce_end);
-		lua_rawseti(L, -2, 4);
-		lua_pushnumber(L, p->m_unce_after);
-		lua_rawseti(L, -2, 5);
+		lua_createtable(L, p->m_phases.size(), 0);
+		for(size_t i= 0; i < p->m_phases.size(); ++i)
+		{
+			p->push_phase(L, i);
+			lua_rawseti(L, -2, i+1);
+		}
 		return 1;
 	}
-	static int set_unce(T* p, lua_State* L)
+	static int get_phase(T* p, lua_State* L)
 	{
-		if(!lua_istable(L, 1))
+		size_t phase= static_cast<size_t>(IArg(1)) - 1;
+		if(phase >= p->m_phases.size())
 		{
-			luaL_error(L, "Arg for ModInput:set_unce must be a table of five numbers.");
+			lua_pushnil(L);
 		}
-		lua_rawgeti(L, 1, 1);
-		p->m_unce_before= FArg(-1);
-		lua_pop(L, 1);
-		lua_rawgeti(L, 1, 2);
-		p->m_unce_begin= FArg(-1);
-		lua_pop(L, 1);
-		lua_rawgeti(L, 1, 3);
-		p->m_unce_during= FArg(-1);
-		lua_pop(L, 1);
-		lua_rawgeti(L, 1, 4);
-		p->m_unce_end= FArg(-1);
-		lua_pop(L, 1);
-		lua_rawgeti(L, 1, 5);
-		p->m_unce_after= FArg(-1);
-		lua_pop(L, 1);
+		else
+		{
+			p->push_phase(L, phase);
+		}
+		return 1;
+	}
+	static int get_default_phase(T* p, lua_State* L)
+	{
+		p->push_def_phase(L);
+		return 1;
+	}
+	static int get_num_phases(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->m_phases.size());
+		return 1;
+	}
+	static int set_all_phases(T* p, lua_State* L)
+	{
+		p->load_phases(L, 1);
+		COMMON_RETURN_SELF;
+	}
+	static int set_phase(T* p, lua_State* L)
+	{
+		size_t phase= static_cast<size_t>(IArg(1)) - 1;
+		if(phase >= p->m_phases.size() || !lua_istable(L, 2))
+		{
+			luaL_error(L, "Args to ModInput:set_phase must be an index and a table.");
+		}
+		p->load_one_phase(L, 2, phase);
+		COMMON_RETURN_SELF;
+	}
+	static int set_default_phase(T* p, lua_State* L)
+	{
+		p->load_def_phase(L, 1);
+		COMMON_RETURN_SELF;
+	}
+	static int remove_phase(T* p, lua_State* L)
+	{
+		size_t phase= static_cast<size_t>(IArg(1)) - 1;
+		if(phase < p->m_phases.size())
+		{
+			p->m_phases.erase(p->m_phases.begin() + phase);
+		}
+		COMMON_RETURN_SELF;
+	}
+	static int clear_phases(T* p, lua_State* L)
+	{
+		(void)L;
+		p->m_phases.clear();
+		p->m_phases_enabled= false;
 		COMMON_RETURN_SELF;
 	}
 	LunaModInput()
 	{
 		ADD_GET_SET_METHODS(type);
 		ADD_GET_SET_METHODS(rep_enabled);
-		ADD_GET_SET_METHODS(unce_enabled);
+		ADD_GET_SET_METHODS(phases_enabled);
 		ADD_GET_SET_METHODS(scalar);
 		ADD_GET_SET_METHODS(offset);
 		ADD_GET_SET_METHODS(rep);
-		ADD_GET_SET_METHODS(unce);
+		ADD_GET_SET_METHODS(all_phases);
+		ADD_GET_SET_METHODS(phase);
+		ADD_GET_SET_METHODS(default_phase);
+		ADD_METHOD(get_num_phases);
+		ADD_METHOD(remove_phase);
+		ADD_METHOD(clear_phases);
 	}
 };
 LUA_REGISTER_CLASS(ModInput);

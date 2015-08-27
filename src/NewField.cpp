@@ -443,6 +443,11 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	}
 	double head_y_offset= note.y_offset;
 	double tail_y_offset= note.tail_y_offset;
+	if(tail_y_offset < head_y_offset)
+	{
+		// The speed mod is negative.
+		std::swap(head_y_offset, tail_y_offset);
+	}
 	double y_off_len= tail_y_offset - head_y_offset;
 	hold_time_lerper beat_lerper(head_y_offset, y_off_len, head_beat, tail_beat - head_beat);
 	hold_time_lerper second_lerper(head_y_offset, y_off_len, head_second, tail_second - head_second);
@@ -1334,6 +1339,16 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		p->set_displayed_second(FArg(1));
 		COMMON_RETURN_SELF;
 	}
+	static int set_pixels_visible_before(T* p, lua_State* L)
+	{
+		p->set_pixels_visible_before(FArg(1));
+		COMMON_RETURN_SELF;
+	}
+	static int set_pixels_visible_after(T* p, lua_State* L)
+	{
+		p->set_pixels_visible_after(FArg(1));
+		COMMON_RETURN_SELF;
+	}
 	static int receptor_y_offset(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->head_y_offset());
@@ -1371,6 +1386,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_GET_SET_METHODS(scroll_segments_enabled);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
+		ADD_METHOD(set_pixels_visible_before);
+		ADD_METHOD(set_pixels_visible_after);
 		ADD_METHOD(receptor_y_offset);
 		ADD_METHOD(get_reverse_shift);
 		ADD_METHOD(get_reverse_scale);

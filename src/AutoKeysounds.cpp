@@ -103,6 +103,7 @@ void AutoKeysounds::LoadAutoplaySoundsInto( RageSoundReader_Chain *pChain )
 
 void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, RageSoundReader *&pPlayer1, RageSoundReader *&pPlayer2 )
 {
+	LOG->Warn("AutoKeysounds::LoadTracks starting.");
 	// If we have two players, prefer a three-track sound; otherwise prefer a
 	// two-track sound.
 	//bool bTwoPlayers = GAMESTATE->GetNumPlayersEnabled() == 2;
@@ -114,6 +115,8 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 	vector<RString> vsMusicFile;
 	const RString sMusicPath = GAMESTATE->m_pCurSteps[GAMESTATE->GetMasterPlayerNumber()]->GetMusicPath();
 
+	LOG->Warn("Music path is %s", sMusicPath.c_str());
+
 	if( !sMusicPath.empty() )
 		vsMusicFile.push_back( sMusicPath );
 
@@ -122,13 +125,18 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 		if( it == InstrumentTrack_Guitar )
 			continue;
 		if( pSong->HasInstrumentTrack(it) )
-			vsMusicFile.push_back( pSong->GetInstrumentTrackPath(it) );
+		{
+			RString const instrument_path= pSong->GetInstrumentTrackPath(it);
+			LOG->Warn("Adding instrument_path %s", instrument_path.c_str());
+			vsMusicFile.push_back( instrument_path );
+		}
 	}
 
 
 	vector<RageSoundReader *> vpSounds;
 	FOREACH( RString, vsMusicFile, s )
 	{
+		LOG->Warn("Opening music file %s", s->c_str());
 		RString sError;
 		RageSoundReader *pSongReader = RageSoundReader_FileReader::OpenFile( *s, sError );
 		vpSounds.push_back( pSongReader );
@@ -136,15 +144,19 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 
 	if( vpSounds.size() == 1 )
 	{
+		LOG->Warn("Only one sound.");
 		RageSoundReader *pSongReader = vpSounds[0];
 
 		// Load the buffering filter before the effects filters, so effects aren't delayed.
+		LOG->Warn("Creating RageSoundReader_Extend");
 		pSongReader = new RageSoundReader_Extend( pSongReader );
+		LOG->Warn("Creating RageSoundReader_ThreadedBuffer");
 		pSongReader = new RageSoundReader_ThreadedBuffer( pSongReader );
 		pShared = pSongReader;
 	}
 	else if( !vpSounds.empty() )
 	{
+		LOG->Warn("%zu sounds.", vpSounds.size());
 		RageSoundReader_Merge *pMerge = new RageSoundReader_Merge;
 
 		FOREACH( RageSoundReader *, vpSounds, so )
@@ -159,6 +171,10 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 		pShared = pSongReader;
 	}
 
+	if(pShared == NULL)
+	{
+		LOG->Warn("pShared came out NULL, probably about to crash.");
+	}
 
 	if( pSong->HasInstrumentTrack(InstrumentTrack_Guitar) )
 	{
@@ -235,12 +251,19 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 
 void AutoKeysounds::FinishLoading()
 {
+	LOG->Warn("AutoKeysounds::FinishLoading starting.");
 	m_sSound.Unload();
 
+	LOG->Warn("Previous sounds unloaded.");
 	Song* pSong = GAMESTATE->m_pCurSong;
 
+	if(pSong == NULL)
+	{
+		LOG->Warn("Current song is NULL.");
+	}
 	vector<RageSoundReader *> apSounds;
 	LoadTracks( pSong, m_pSharedSound, m_pPlayerSounds[0], m_pPlayerSounds[1] );
+	LOG->Warn("LoadTracks finished.");
 
 	// Load autoplay sounds, if any.
 	{
@@ -265,6 +288,7 @@ void AutoKeysounds::FinishLoading()
 	}
 	ASSERT_M( m_pSharedSound != NULL, ssprintf("No keysounds were loaded for the song %s!", pSong->m_sMainTitle.c_str() ));
 
+	LOG->Warn("Creating pitch change, post buffering, and pan.");
 	m_pSharedSound = new RageSoundReader_PitchChange( m_pSharedSound );
 	m_pSharedSound = new RageSoundReader_PostBuffering( m_pSharedSound );
 	m_pSharedSound = new RageSoundReader_Pan( m_pSharedSound );
@@ -272,6 +296,7 @@ void AutoKeysounds::FinishLoading()
 
 	if( m_pPlayerSounds[0] != NULL )
 	{
+	LOG->Warn("Creating pitch change, post buffering, and pan for player 1.");
 		m_pPlayerSounds[0] = new RageSoundReader_PitchChange( m_pPlayerSounds[0] );
 		m_pPlayerSounds[0] = new RageSoundReader_PostBuffering( m_pPlayerSounds[0] );
 		m_pPlayerSounds[0] = new RageSoundReader_Pan( m_pPlayerSounds[0] );
@@ -280,6 +305,7 @@ void AutoKeysounds::FinishLoading()
 
 	if( m_pPlayerSounds[1] != NULL )
 	{
+	LOG->Warn("Creating pitch change, post buffering, and pan for player 2.");
 		m_pPlayerSounds[1] = new RageSoundReader_PitchChange( m_pPlayerSounds[1] );
 		m_pPlayerSounds[1] = new RageSoundReader_PostBuffering( m_pPlayerSounds[1] );
 		m_pPlayerSounds[1] = new RageSoundReader_Pan( m_pPlayerSounds[1] );
@@ -287,15 +313,20 @@ void AutoKeysounds::FinishLoading()
 	}
 
 	if( GAMESTATE->GetNumPlayersEnabled() == 1 && GAMESTATE->GetMasterPlayerNumber() == PLAYER_2 )
+	{
+		LOG->Warn("Swapping player sounds because the master player is player 2.");
 		swap( m_pPlayerSounds[PLAYER_1], m_pPlayerSounds[PLAYER_2] );
+	}
 
 	if( apSounds.size() > 1 )
 	{
 		RageSoundReader_Merge *pMerge = new RageSoundReader_Merge;
 
+		LOG->Warn("Merging sounds.");
 		FOREACH( RageSoundReader *, apSounds, ps )
 			pMerge->AddSound( *ps );
 
+		LOG->Warn("Finishing merge.");
 		pMerge->Finish( SOUNDMAN->GetDriverSampleRate() );
 
 		m_pChain = pMerge;
@@ -306,7 +337,9 @@ void AutoKeysounds::FinishLoading()
 		m_pChain = apSounds[0];
 	}
 
+	LOG->Warn("Loading chain sound reader.");
 	m_sSound.LoadSoundReader( m_pChain );
+	LOG->Warn("AutoKeysounds::FinishLoading completed.");
 }
 
 void AutoKeysounds::Update( float fDelta )

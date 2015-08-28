@@ -1550,11 +1550,16 @@ void ScreenEdit::Init()
 
 	m_AutoKeysounds.FinishLoading();
 	m_pSoundMusic = m_AutoKeysounds.GetSound();
+	if(m_pSoundMusic == NULL)
+	{
+		LOG->Warn("Music sound is null after finished loading.  Probably about to crash.");
+	}
 
 	this->HandleScreenMessage( SM_UpdateTextInfo );
 	m_bTextInfoNeedsUpdate = true;
 
 	SubscribeToMessage( Message_SongModified );
+	LOG->Warn("ScreenEdit::Init completed.");
 }
 
 ScreenEdit::~ScreenEdit()

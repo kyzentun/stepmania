@@ -113,6 +113,13 @@ void AutoKeysounds::LoadTracks( const Song *pSong, RageSoundReader *&pShared, Ra
 	pShared = NULL;
 
 	vector<RString> vsMusicFile;
+	LOG->Warn("Master player is %d", GAMESTATE->GetMasterPlayerNumber());
+	Steps* master_steps= GAMESTATE->m_pCurSteps[GAMESTATE->GetMasterPlayerNumber()];
+	if(master_steps == NULL)
+	{
+		LOG->Warn("Steps for master player are NULL, crashing.");
+	}
+	LOG->Warn("Steps %d", master_steps);
 	const RString sMusicPath = GAMESTATE->m_pCurSteps[GAMESTATE->GetMasterPlayerNumber()]->GetMusicPath();
 
 	LOG->Warn("Music path is %s", sMusicPath.c_str());

@@ -284,6 +284,14 @@ inline double get_optional_double(lua_State* L, int index, char const* field, do
 	return ret;
 }
 
+inline bool get_optional_bool(lua_State* L, int index, char const* field)
+{
+	lua_getfield(L, index, field);
+	bool ret= lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	return ret;
+}
+
 #define LuaFunction( func, expr ) \
 int LuaFunc_##func( lua_State *L ); \
 int LuaFunc_##func( lua_State *L ) { \

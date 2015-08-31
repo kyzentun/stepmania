@@ -1,4 +1,5 @@
 #include "global.h"
+#include "CubicSpline.h"
 #include "EnumHelper.h"
 #include "ModValue.h"
 #include "RageLog.h"
@@ -45,11 +46,12 @@ static const char* ModFunctionTypeNames[] = {
 	"Sine",
 	"Square",
 	"Triangle",
+	"Spline",
 };
 XToString(ModFunctionType);
 LuaXType(ModFunctionType);
 
-void ModManager::update(double curr_second)
+void ModManager::update(double curr_beat, double curr_second)
 {
 	double const time_diff= curr_second - m_prev_curr_second;
 	if(time_diff == 0)
@@ -65,8 +67,7 @@ void ModManager::update(double curr_second)
 			if(this_fap->func->m_end_second < curr_second)
 			{
 				insert_into_past(*this_fap);
-				this_fap->parent->remove_mod_from_active_list(this_fap->func);
-				m_present_funcs.erase(this_fap);
+				remove_from_present(this_fap);
 			}
 			else
 			{
@@ -103,14 +104,12 @@ void ModManager::update(double curr_second)
 			if(this_fap->func->m_end_second < curr_second)
 			{
 				insert_into_past(*this_fap);
-				this_fap->parent->remove_mod_from_active_list(this_fap->func);
-				m_present_funcs.erase(this_fap);
+				remove_from_present(this_fap);
 			}
 			else if(this_fap->func->m_start_second > curr_second)
 			{
 				insert_into_future(*this_fap);
-				this_fap->parent->remove_mod_from_active_list(this_fap->func);
-				m_present_funcs.erase(this_fap);
+				remove_from_present(this_fap);
 			}
 		}
 		for(auto fap= m_past_funcs.begin(); fap != m_past_funcs.end();)
@@ -135,7 +134,11 @@ void ModManager::update(double curr_second)
 		}
 	}
 	m_prev_curr_second= curr_second;
+	update_splines(curr_beat, curr_second);
 }
+// ModManager::update_splines has to be defined below all the different
+// ModFunction types so that the compiler can see the full ModFunctionSpline
+// declaration when processing it.
 
 void ModManager::add_mod(ModFunction* func, ModifiableValue* parent)
 {
@@ -216,6 +219,7 @@ void ModManager::insert_into_past(ModFunction* func, ModifiableValue* parent)
 
 void ModManager::insert_into_present(ModFunction* func, ModifiableValue* parent)
 {
+	add_to_splines_if_its_a_spline(func);
 	parent->add_mod_to_active_list(func);
 	// m_present_funcs is sorted in ascending end second order.  Entries with
 	// the same end second are sorted in ascending start second order.
@@ -245,6 +249,13 @@ void ModManager::insert_into_future(ModFunction* func, ModifiableValue* parent)
 		}
 	}
 	m_future_funcs.push_back(func_and_parent(func, parent));
+}
+
+void ModManager::remove_from_present(std::list<func_and_parent>::iterator fapi)
+{
+	remove_from_splines_if_its_a_spline(fapi->func);
+	fapi->parent->remove_mod_from_active_list(fapi->func);
+	m_present_funcs.erase(fapi);
 }
 
 void ModInput::clear()
@@ -363,6 +374,37 @@ void ModInput::load_from_lua(lua_State* L, int index)
 		lua_pop(L, 1);
 		lua_getfield(L, index, "phases");
 		load_phases(L, lua_gettop(L));
+		lua_pop(L, 1);
+		lua_getfield(L, index, "spline");
+		int spline_index= lua_gettop(L);
+		if(lua_istable(L, spline_index))
+		{
+			m_loop_spline= get_optional_bool(L, spline_index, "loop");
+			m_polygonal_spline= get_optional_bool(L, spline_index, "polygonal");
+			size_t num_points= lua_objlen(L, spline_index);
+			m_spline.resize(num_points);
+			for(size_t p= 0; p < num_points; ++p)
+			{
+				lua_rawgeti(L, spline_index, p+1);
+				m_spline.set_point(p, lua_tonumber(L, -1));
+				lua_pop(L, 1);
+			}
+			if(m_polygonal_spline)
+			{
+				m_spline.solve_polygonal();
+			}
+			else
+			{
+				if(m_loop_spline)
+				{
+					m_spline.solve_looped();
+				}
+				else
+				{
+					m_spline.solve_straight();
+				}
+			}
+		}
 		lua_pop(L, 1);
 	}
 }
@@ -651,6 +693,185 @@ struct ModFunctionTriangle : ModFunctionWave
 	}
 };
 
+struct ModFunctionSpline : ModFunction
+{
+	ModFunctionSpline(ModifiableValue* parent)
+		:ModFunction(parent)
+	{}
+	ModInput t_input;
+	vector<ModInput> points;
+	bool loop;
+	bool polygonal;
+	// Solving the spline for every note is probably expensive.  But it could
+	// allow more flexibility if an input point uses EvalBeat or similar.
+	// It's possible to look at the types of the input points and figure out
+	// whether per-note solving is necessary, but forcing a flag to be set
+	// makes the lua author more aware of the extra processing cost.
+	virtual bool needs_per_frame_solve()
+	{
+		return !per_frame_points.empty();
+	}
+	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
+	{
+		per_note_solve(input, time);
+		double t= t_input.pick(input, time);
+		return spline.evaluate(t, loop);
+	}
+	virtual void load_from_lua(lua_State* L, int index)
+	{
+		// The first element of the table is the type.  So the number of points
+		// is one less than the size of the table.
+		size_t num_points= lua_objlen(L, index) - 1;
+		points.resize(num_points);
+		vector<ModInput*> point_wrapper;
+		point_wrapper.reserve(num_points);
+		for(auto&& p : points)
+		{
+			point_wrapper.push_back(&p);
+		}
+		load_inputs_from_lua(L, index, point_wrapper);
+		lua_getfield(L, index, "t");
+		t_input.load_from_lua(L, lua_gettop(L));
+		lua_pop(L, 1);
+		loop= get_optional_bool(L, index, "loop");
+		polygonal= get_optional_bool(L, index, "polygonal");
+		// Now that the points are loaded, organize them by type and send all the
+		// scalars to the spline now.
+		spline.resize(points.size());
+		mod_val_inputs scalar_input(0.0, 0.0);
+		mod_time_inputs scalar_time(0.0);
+		for(size_t p= 0; p < points.size(); ++p)
+		{
+			ModInputMetaType mt= points[p].get_meta_type();
+			switch(mt)
+			{
+				case MIMT_Scalar:
+					spline.set_point(p, points[p].pick(scalar_input, scalar_time));
+					break;
+				case MIMT_PerNote:
+					per_note_points.push_back(p);
+					// Per-note points are also put into the per-frame list so that
+					// they will be set for the per-frame solving step.
+				case MIMT_PerFrame:
+					per_frame_points.push_back(p);
+					break;
+			}
+		}
+		if(per_frame_points.empty())
+		{
+			solve();
+		}
+	}
+	virtual void push_inputs(lua_State* L, int table_index)
+	{
+		vector<ModInput*> inputs= {&t_input};
+		inputs.reserve(1 + points.size());
+		for(auto&& p : points)
+		{
+			inputs.push_back(&p);
+		}
+		push_inputs_internal(L, table_index, inputs);
+	}
+	virtual size_t num_inputs() { return 1+points.size(); }
+
+	void solve()
+	{
+		if(polygonal)
+		{
+			spline.solve_polygonal();
+		}
+		else
+		{
+			if(loop)
+			{
+				spline.solve_looped();
+			}
+			else
+			{
+				spline.solve_straight();
+			}
+		}
+	}
+	void per_frame_solve(mod_val_inputs const& input)
+	{
+		if(per_frame_points.empty())
+		{
+			return;
+		}
+		mod_time_inputs time(m_start_beat, m_start_second,
+			input.music_beat, input.music_second, m_end_beat, m_end_second);
+		for(auto pindex : per_frame_points)
+		{
+			spline.set_point(pindex, points[pindex].pick(input, time));
+		}
+		solve();
+	}
+	void per_note_solve(mod_val_inputs const& input, mod_time_inputs const& time)
+	{
+		if(per_note_points.empty())
+		{
+			return;
+		}
+		for(auto pindex : per_note_points)
+		{
+			spline.set_point(pindex, points[pindex].pick(input, time));
+		}
+		solve();
+	}
+
+private:
+	CubicSpline spline;
+	// All scalar inputs are sent to the spline on loading.  So the ones that
+	// are not scalars are listed in per_note_points and per_frame_points so
+	// those stages only send the ones they need to.
+	// If all the input points are scalars, then they only need to be copied
+	// into the spline once, and the spline only has to be solved once ever.
+	vector<size_t> per_note_points;
+	vector<size_t> per_frame_points;
+};
+
+// ModManager::update_splines has to be defined below all the different
+// ModFunction types so that the compiler can see the full ModFunctionSpline
+// declaration when processing it.
+void ModManager::update_splines(double curr_beat, double curr_second)
+{
+	if(!m_active_splines.empty())
+	{
+		mod_val_inputs input(curr_beat, curr_second);
+		for(auto&& spline : m_active_splines)
+		{
+			spline->per_frame_solve(input);
+		}
+	}
+}
+
+void ModManager::add_to_splines_if_its_a_spline(ModFunction* func)
+{
+	ModFunctionSpline* spline_func= dynamic_cast<ModFunctionSpline*>(func);
+	if(spline_func != nullptr)
+	{
+		m_active_splines.insert(spline_func);
+	}
+}
+
+void ModManager::remove_from_splines_if_its_a_spline(ModFunction* func)
+{
+	ModFunctionSpline* spline_func= dynamic_cast<ModFunctionSpline*>(func);
+	if(spline_func != nullptr)
+	{
+		auto active_spline_entry= m_active_splines.find(spline_func);
+		if(active_spline_entry != m_active_splines.end())
+		{
+			m_active_splines.erase(active_spline_entry);
+		}
+	}
+}
+
+void ModManager::add_spline(ModFunctionSpline* func)
+{
+	m_active_splines.insert(func);
+}
+
 static ModFunction* create_field_mod(ModifiableValue* parent, lua_State* L, int index)
 {
 	lua_rawgeti(L, index, 1);
@@ -679,6 +900,9 @@ static ModFunction* create_field_mod(ModifiableValue* parent, lua_State* L, int 
 			break;
 		case MFT_Triangle:
 			ret= new ModFunctionTriangle(parent);
+			break;
+		case MFT_Spline:
+			ret= new ModFunctionSpline(parent);
 			break;
 		default:
 			return nullptr;
@@ -737,6 +961,14 @@ ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 		(*(mod->second)) = (*new_mod);
 		delete new_mod;
 		ret= mod->second;
+	}
+	if(ret->needs_per_frame_solve())
+	{
+		ModFunctionSpline* spline= dynamic_cast<ModFunctionSpline*>(ret);
+		if(spline != nullptr)
+		{
+			m_manager->add_spline(spline);
+		}
 	}
 	return ret;
 }

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "CubicSpline.h"
 #include "RageTypes.h"
 #include "TimingData.h"
 
@@ -18,6 +19,11 @@ struct ModifiableValue;
 // invalid_modfunction_time exists so that the loading code can tell when a
 // start or end time was provided.
 static const double invalid_modfunction_time= -1000.0;
+
+// The forward declaration for ModFunctionSpline exists because ModManager
+// takes care of updating splines that need to be solved every frame.  No
+// other part of the engine should care about them.
+struct ModFunctionSpline;
 
 struct ModManager
 {
@@ -34,12 +40,17 @@ struct ModManager
 	ModManager()
 		:m_prev_curr_second(invalid_modfunction_time)
 	{}
-	void update(double curr_second);
+	void update(double curr_beat, double curr_second);
+	void update_splines(double curr_beat, double curr_second);
 	void add_mod(ModFunction* func, ModifiableValue* parent);
 	void remove_mod(ModFunction* func);
 	void remove_all_mods(ModifiableValue* parent);
 
 	void dump_list_status();
+
+	void add_to_splines_if_its_a_spline(ModFunction* func);
+	void remove_from_splines_if_its_a_spline(ModFunction* func);
+	void add_spline(ModFunctionSpline* func);
 
 private:
 	void insert_into_past(ModFunction* func, ModifiableValue* parent);
@@ -52,11 +63,14 @@ private:
 	INSERT_FAP(present);
 	INSERT_FAP(future);
 #undef INSERT_FAP
+	void remove_from_present(std::list<func_and_parent>::iterator fapi);
 
 	double m_prev_curr_second;
 	std::list<func_and_parent> m_past_funcs;
 	std::list<func_and_parent> m_present_funcs;
 	std::list<func_and_parent> m_future_funcs;
+
+	std::unordered_set<ModFunctionSpline*> m_active_splines;
 };
 
 struct mod_val_inputs
@@ -121,6 +135,13 @@ enum ModInputType
 const RString& ModInputTypeToString(ModInputType fmt);
 LuaDeclareType(ModInputType);
 
+enum ModInputMetaType
+{
+	MIMT_Scalar,
+	MIMT_PerFrame,
+	MIMT_PerNote
+};
+
 struct ModInput
 {
 	ModInputType m_type;
@@ -179,11 +200,40 @@ struct ModInput
 	std::vector<phase> m_phases;
 	phase m_default_phase;
 
+	// Special stuff for ModInputType_Spline.
+	CubicSpline m_spline;
+	bool m_loop_spline;
+	bool m_polygonal_spline;
+
 	ModInput()
 		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0),
 		m_rep_enabled(false), m_rep_begin(0.0), m_rep_end(0.0),
-		m_phases_enabled(false)
+		m_phases_enabled(false), m_loop_spline(false), m_polygonal_spline(false)
 	{}
+	ModInputMetaType get_meta_type()
+	{
+		switch(m_type)
+		{
+			case MIT_Scalar:
+				return MIMT_Scalar;
+			case MIT_MusicBeat:
+			case MIT_MusicSecond:
+			case MIT_StartDistBeat:
+			case MIT_StartDistSecond:
+			case MIT_EndDistBeat:
+			case MIT_EndDistSecond:
+				return MIMT_PerFrame;
+			case MIT_EvalBeat:
+			case MIT_EvalSecond:
+			case MIT_DistBeat:
+			case MIT_DistSecond:
+			case MIT_YOffset:
+				return MIMT_PerNote;
+			default:
+				break;
+		}
+		return MIMT_Scalar;
+	}
 	void clear();
 	void push_phase(lua_State* L, size_t phase);
 	void push_def_phase(lua_State* L);
@@ -215,6 +265,14 @@ struct ModInput
 		}
 		phase const* curr= find_phase(input);
 		return ((input - curr->start) * curr->mult) + curr->offset;
+	}
+	double apply_spline(double input)
+	{
+		if(m_spline.empty())
+		{
+			return input;
+		}
+		return m_spline.evaluate(input, m_loop_spline);
 	}
 	double pick(mod_val_inputs const& input, mod_time_inputs const& time)
 	{
@@ -261,7 +319,8 @@ struct ModInput
 				break;
 		}
 		ret= apply_phase(apply_rep(ret));
-		return (ret * m_scalar) + m_offset;
+		ret= apply_spline(ret * m_scalar);
+		return ret + m_offset;
 	}
 	virtual void PushSelf(lua_State* L);
 };
@@ -275,6 +334,7 @@ enum ModFunctionType
 	MFT_Sine,
 	MFT_Square,
 	MFT_Triangle,
+	MFT_Spline,
 	NUM_ModFunctionType,
 	ModFunctionType_Invalid
 };
@@ -295,6 +355,10 @@ struct ModFunction
 	void calc_unprovided_times(TimingData const* timing);
 
 	std::string const& get_name() { return m_name; }
+	// needs_per_frame_solve exists so that ModifiableValue can check after
+	// creating a ModFunction to see if it needs to be added to the manager for
+	// solving every frame.
+	virtual bool needs_per_frame_solve() { return false; }
 
 	virtual void update(double delta) { UNUSED(delta); }
 	double evaluate(mod_val_inputs const& input)
@@ -332,7 +396,7 @@ struct ModFunction
 
 protected:
 	void push_inputs_internal(lua_State* L, int table_index,
-		std::initializer_list<ModInput*> inputs)
+		std::vector<ModInput*> inputs)
 	{
 		size_t i= 1;
 		for(auto&& input : inputs)

@@ -562,6 +562,7 @@ void Player::Init(
 	}
 	if(m_new_field)
 	{
+		m_new_field->set_player_number(GetPlayerState()->m_PlayerNumber);
 		this->AddChild(m_new_field);
 	}
 
@@ -1603,6 +1604,7 @@ void Player::DrawPrimitives()
 		{
 			PlayerNoteFieldPositioner poser(this, GetX(), tilt, skew, mini, center_y, reverse);
 			m_pNoteField->DrawBoardPrimitive();
+			m_new_field->draw_board();
 		}
 		return;
 	}

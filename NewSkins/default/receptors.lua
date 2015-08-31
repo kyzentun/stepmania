@@ -41,6 +41,17 @@ return function(button_list)
 				else
 					self:diffuse(white)
 				end
+			end,
+			-- The BeatUpdate command happens every frame to update the per-beat
+			-- animation.  The param table has one element, the beat value.  The
+			-- beat value range is [0, 1), it is 0 when the beat occurs, and goes
+			-- towards 1 as the beat progresses.
+			-- This example uses that to calculate a glow value that starts at .25
+			-- and takes half a beat to fade to 0.
+			-- A receptor that is based on animated frames could use
+			-- SetSecondsIntoAnimation instead.
+			BeatUpdateCommand= function(self, param)
+				self:glow{1, 1, 1, (1 - param.beat*2) / 4}
 			end
 		}
 	end

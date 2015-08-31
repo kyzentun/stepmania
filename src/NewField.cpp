@@ -97,7 +97,7 @@ void NewFieldColumn::set_displayed_time(double beat, double second)
 {
 	m_curr_beat= beat;
 	m_curr_second= second;
-	m_mod_manager.update(second);
+	m_mod_manager.update(beat, second);
 }
 
 void NewFieldColumn::update_displayed_time(double beat, double second)
@@ -765,6 +765,7 @@ void NewFieldColumn::build_render_lists()
 	first_note_visible_prev_frame= first_visible_this_frame;
 	m_prev_curr_second= m_curr_second;
 
+	send_beat_update(m_curr_beat - floor(m_curr_beat));
 	set_note_upcoming(m_status.upcoming_beat_dist, m_status.upcoming_second_dist);
 	// The hold status should be updated if there is a currently active hold
 	// or if there was one last frame.
@@ -990,13 +991,12 @@ static Message create_did_message(bool bright)
 
 void NewFieldColumn::pass_message_to_heads(Message& msg)
 {
-	for(auto&& head : m_heads_below_notes)
+	for(auto&& headset : {&m_heads_below_notes, &m_heads_above_notes})
 	{
-		head.actor->HandleMessage(msg);
-	}
-	for(auto&& head : m_heads_above_notes)
-	{
-		head.actor->HandleMessage(msg);
+		for(auto&& head : *headset)
+		{
+			head.actor->HandleMessage(msg);
+		}
 	}
 }
 
@@ -1058,6 +1058,13 @@ void NewFieldColumn::set_note_upcoming(double beat_distance, double second_dista
 	pass_message_to_heads(msg);
 }
 
+void NewFieldColumn::send_beat_update(double beat)
+{
+	Message msg("BeatUpdate");
+	msg.SetParam("beat", beat);
+	pass_message_to_heads(msg);
+}
+
 void NewFieldColumn::DrawPrimitives()
 {
 	switch(curr_render_step)
@@ -1086,9 +1093,13 @@ REGISTER_ACTOR_CLASS(NewField);
 
 NewField::NewField()
 	:m_trans_mod(&m_mod_manager),
-	 m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr)
+	 m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr),
+	 m_drawing_board(false)
 {
 	set_skin("default");
+	m_board.Load(THEME->GetPathG("NoteField", "board"));
+	m_board->SetName("Board");
+	m_board->PlayCommand("On");
 }
 
 NewField::~NewField()
@@ -1122,8 +1133,20 @@ void NewField::PreDraw()
 	ActorFrame::PreDraw();
 }
 
+void NewField::draw_board()
+{
+	m_drawing_board= true;
+	Draw();
+	m_drawing_board= false;
+}
+
 void NewField::DrawPrimitives()
 {
+	if(m_drawing_board)
+	{
+		m_board->Draw();
+		return;
+	}
 	vector<transform> column_trans(m_columns.size());
 	for(auto&& col : m_columns)
 	{
@@ -1243,7 +1266,7 @@ void NewField::update_displayed_time(double beat, double second)
 {
 	m_curr_beat= beat;
 	m_curr_second= second;
-	m_mod_manager.update(second);
+	m_mod_manager.update(beat, second);
 	for(auto&& col : m_columns)
 	{
 		col.update_displayed_time(beat, second);

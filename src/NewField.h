@@ -112,6 +112,7 @@ struct NewFieldColumn : ActorFrame
 	void set_hold_status(TapNote const* tap, bool start, bool end);
 	void set_pressed(bool on);
 	void set_note_upcoming(double beat_distance, double second_distance);
+	void send_beat_update(double beat);
 
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
@@ -176,6 +177,8 @@ private:
 	size_t m_column;
 	NewSkinColumn* m_newskin;
 
+	AutoActor m_beat_bars;
+
 	std::vector<column_head> m_heads_below_notes;
 	std::vector<column_head> m_heads_above_notes;
 
@@ -209,6 +212,7 @@ struct NewField : ActorFrame
 	virtual void UpdateInternal(float delta);
 	virtual bool EarlyAbortDraw() const;
 	virtual void PreDraw();
+	void draw_board();
 	virtual void DrawPrimitives();
 
 	virtual void PushSelf(lua_State *L);
@@ -220,6 +224,15 @@ struct NewField : ActorFrame
 	void set_skin(RString const& skin_name);
 	void set_steps(Steps* data);
 	void set_note_data(NoteData* note_data, TimingData* timing, Style const* curr_style);
+	// set_player_number exists only so that the notefield board can have
+	// per-player configuration on gameplay.  Using it for any other purpose
+	// is forbidden.
+	void set_player_number(PlayerNumber pn)
+	{
+		Message msg("PlayerStateSet");
+		msg.SetParam("PlayerNumber", pn);
+		m_board->HandleMessage(msg);
+	}
 
 	void update_displayed_time(double beat, double second);
 
@@ -240,6 +253,9 @@ private:
 	std::vector<NewFieldColumn> m_columns;
 	NewSkinData m_newskin;
 	NewSkinLoader m_skin_walker;
+
+	bool m_drawing_board;
+	AutoActor m_board;
 };
 
 #endif

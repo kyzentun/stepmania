@@ -58,7 +58,7 @@ void VectorFloatNormalize(vector<float>& v)
 void RageVec3Cross(RageVector3* ret, RageVector3 const* a, RageVector3 const* b)
 {
 	ret->x= (a->y * b->z) - (a->z * b->y);
-	ret->y= ((a->x * b->z) - (a->z * b->x));
+	ret->y= (a->z * b->x) - (a->x * b->z);
 	ret->z= (a->x * b->y) - (a->y * b->x);
 }
 

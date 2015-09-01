@@ -332,6 +332,7 @@ enum ModFunctionType
 	MFT_Power,
 	MFT_Log,
 	MFT_Sine,
+	MFT_Tan,
 	MFT_Square,
 	MFT_Triangle,
 	MFT_Spline,

@@ -128,6 +128,8 @@ struct NewFieldColumn : ActorFrame
 	bool m_show_unjudgable_notes;
 	bool m_speed_segments_enabled;
 	bool m_scroll_segments_enabled;
+	bool m_add_y_offset_to_position;
+	bool m_holds_skewed_by_mods;
 
 	struct column_status
 	{

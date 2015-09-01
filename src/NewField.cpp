@@ -29,6 +29,7 @@ REGISTER_ACTOR_CLASS(NewFieldColumn);
 NewFieldColumn::NewFieldColumn()
 	:m_show_unjudgable_notes(true),
 	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
+	 m_add_y_offset_to_position(true), m_holds_skewed_by_mods(true),
 	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
 	 m_speed_mod(&m_mod_manager, 0.0),
@@ -412,6 +413,45 @@ static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
 	verts_to_draw.add_vert(right, color, glow_color, RageVector2(tex_right, tex_y));
 }
 
+struct hold_vert_step_state
+{
+	double y;
+	double beat;
+	double second;
+	double alpha;
+	double glow;
+	transform trans;
+	vector<double> tex_coords;
+	bool calc(NewFieldColumn& col, double curr_y, double end_y, hold_time_lerper& beat_lerp, hold_time_lerper& second_lerp, double curr_beat, double curr_second, hold_texture_handler& tex_handler, int& phase)
+	{
+		tex_coords.clear();
+		bool last_vert_set= false;
+		y= curr_y;
+		if(curr_y >= end_y)
+		{
+			// Different from the end check in hold_texture_handler because this
+			// clips the hold off at the end of the notefield.  That clips the hold
+			// at the end of the hold.
+			y= end_y;
+			last_vert_set= true;
+		}
+		// It's important to call the tex_handler before the lerpers because the
+		// tex_handler changes y in certain conditions.
+		phase= tex_handler.calc_tex_y(y, tex_coords);
+		if(phase == HTP_Done)
+		{
+			last_vert_set= true;
+		}
+		beat= beat_lerp.lerp(y);
+		second= second_lerp.lerp(y);
+		mod_val_inputs mod_input(beat, second, curr_beat, curr_second, y);
+		col.calc_transform(mod_input, trans);
+		alpha= col.m_note_alpha.evaluate(mod_input);
+		glow= col.m_note_glow.evaluate(mod_input);
+		return last_vert_set;
+	}
+};
+
 void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	render_note const& note, double head_beat, double head_second,
 	double tail_beat, double tail_second)
@@ -457,36 +497,37 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	double const tex_center= (tex_left + tex_right) * .5;
 	DISPLAY->ClearAllTextures();
 	bool last_vert_set= false;
-	vector<double> tex_coords;
 	// Set a start and end y so that the hold can be clipped to the start and
 	// end of the field.
 	double start_y= max(tex_handler.start_y, first_y_offset_visible);
 	double end_y= std::min(tex_handler.end_y, last_y_offset_visible);
+	// next_step exists so that the forward vector of a hold can be calculated
+	// and used to make the hold turn and maintain constant width, instead of
+	// being skewed.  Toggle the holds_skewed_by_mods flag with lua to see the
+	// difference.
+	int phase= HTP_Top;
+	hold_vert_step_state next_step; // The OS of the future.
+	next_step.calc(*this, start_y, end_y, beat_lerper, second_lerper, m_curr_beat, m_curr_second, tex_handler, phase);
 	for(double curr_y= start_y; !last_vert_set; curr_y+= y_step)
 	{
-		tex_coords.clear();
-		if(curr_y >= end_y)
+		hold_vert_step_state curr_step= next_step;
+		last_vert_set= next_step.calc(*this, curr_y + y_step, end_y, beat_lerper, second_lerper, m_curr_beat, m_curr_second, tex_handler, phase);
+		RageVector3 render_forward(0.0, 1.0, 0.0);
+		if(!m_holds_skewed_by_mods)
 		{
-			// Different from the end check in hold_texture_handler because this
-			// clips the hold off at the end of the notefield.  That clips the hold
-			// at the end of the hold.
-			curr_y= end_y;
-			last_vert_set= true;
+			render_forward.x= next_step.trans.pos.x - curr_step.trans.pos.x;
+			if(m_add_y_offset_to_position)
+			{
+				render_forward.y= (next_step.y + next_step.trans.pos.y) -
+					(curr_step.y + curr_step.trans.pos.y);
+			}
+			else
+			{
+				render_forward.y= next_step.trans.pos.y - curr_step.trans.pos.y;
+			}
+			render_forward.z= next_step.trans.pos.z - curr_step.trans.pos.z;
+			RageVec3Normalize(&render_forward, &render_forward);
 		}
-		int phase= tex_handler.calc_tex_y(curr_y, tex_coords);
-		if(phase == HTP_Done)
-		{
-			last_vert_set= true;
-		}
-		double curr_beat= beat_lerper.lerp(curr_y);
-		double curr_second= second_lerper.lerp(curr_y);
-
-		transform trans;
-		mod_val_inputs mod_input(curr_beat, curr_second, m_curr_beat, m_curr_second, curr_y);
-		calc_transform(mod_input, trans);
-
-		// TODO: get render_forward from a spline.
-		const RageVector3 render_forward(0.0f, 1.0f, 0.0f);
 		RageVector3 render_left;
 		if(std::abs(render_forward.z) > 0.9f) // 0.9 arbitrariliy picked.
 		{
@@ -496,39 +537,44 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 		{
 			RageVec3Cross(&render_left, &pos_z_vec, &render_forward);
 		}
-		RageAARotate(&render_left, &render_forward, -trans.rot.y);
-		render_left*= (.5 * note_size) * trans.zoom.x;
+		RageAARotate(&render_left, &render_forward, -curr_step.trans.rot.y);
+		render_left*= (.5 * note_size) * curr_step.trans.zoom.x;
 		// Hold caps need to not be squished by the reverse_scale.
 		double render_y= curr_y;
-		switch(phase)
+		if(m_add_y_offset_to_position)
 		{
-			case HTP_Top:
-				render_y= body_start_render_y -
-					((tex_handler.body_start_y - curr_y) * reverse_scale_sign);
-				break;
-			case HTP_Bottom:
-			case HTP_Done:
-				render_y= body_end_render_y +
-					((curr_y - tex_handler.body_end_y) * reverse_scale_sign);
-				break;
-			case HTP_Body:
-			default:
-				render_y= apply_reverse_shift(curr_y) + trans.pos.y;
-				break;
+			switch(phase)
+			{
+				case HTP_Top:
+					render_y= curr_step.trans.pos.y + body_start_render_y -
+						((tex_handler.body_start_y - curr_y) * reverse_scale_sign);
+					break;
+				case HTP_Bottom:
+				case HTP_Done:
+					render_y= curr_step.trans.pos.y + body_end_render_y +
+						((curr_y - tex_handler.body_end_y) * reverse_scale_sign);
+					break;
+				case HTP_Body:
+				default:
+					render_y= apply_reverse_shift(curr_y) + curr_step.trans.pos.y;
+					break;
+			}
+		}
+		else
+		{
+			render_y= curr_step.trans.pos.y;
 		}
 		const RageVector3 left_vert(
-			render_left.x + trans.pos.x, render_y + render_left.y,
-			render_left.z + trans.pos.z);
-		const RageVector3 center_vert(trans.pos.x, render_y, 0 + trans.pos.z);
-		const RageVector3 right_vert(-render_left.x + trans.pos.x, render_y -render_left.y, -render_left.z + trans.pos.z);
-		double alpha= m_note_alpha.evaluate(mod_input);
-		double glow= m_note_glow.evaluate(mod_input);
-		const RageColor color(1.0, 1.0, 1.0, alpha);
-		const RageColor glow_color(1.0, 1.0, 1.0, glow);
+			render_left.x + curr_step.trans.pos.x, render_y + render_left.y,
+			render_left.z + curr_step.trans.pos.z);
+		const RageVector3 center_vert(curr_step.trans.pos.x, render_y, 0 + curr_step.trans.pos.z);
+		const RageVector3 right_vert(-render_left.x + curr_step.trans.pos.x, render_y -render_left.y, -render_left.z + curr_step.trans.pos.z);
+		const RageColor color(1.0, 1.0, 1.0, curr_step.alpha);
+		const RageColor glow_color(1.0, 1.0, 1.0, curr_step.glow);
 #define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, glow_color, tex_left, tex_center, tex_right
-		for(size_t i= 0; i < tex_coords.size(); ++i)
+		for(size_t i= 0; i < curr_step.tex_coords.size(); ++i)
 		{
-			add_vert_strip(tex_coords[i], add_vert_strip_args);
+			add_vert_strip(curr_step.tex_coords[i], add_vert_strip_args);
 		}
 #undef add_vert_strip_args
 		if(verts_to_draw.avail() < 9 || last_vert_set)
@@ -819,7 +865,10 @@ void NewFieldColumn::draw_heads_internal(vector<column_head>& heads, bool recept
 	}
 	transform trans;
 	calc_transform(input, trans);
-	trans.pos.y+= y_offset;
+	if(m_add_y_offset_to_position)
+	{
+		trans.pos.y+= y_offset;
+	}
 	for(auto&& head : heads)
 	{
 		head.frame.set_transform(trans);
@@ -972,7 +1021,10 @@ void NewFieldColumn::draw_taps_internal()
 				double glow= m_note_glow.evaluate(input);
 				transform trans;
 				calc_transform(input, trans);
-				trans.pos.y+= apply_reverse_shift(act.y_offset);
+				if(m_add_y_offset_to_position)
+				{
+					trans.pos.y+= apply_reverse_shift(act.y_offset);
+				}
 				act.act->set_transform(trans);
 				act.act->SetDiffuseAlpha(alpha);
 				act.act->SetGlow(RageColor(1, 1, 1, glow));
@@ -1342,6 +1394,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_SET_BOOL_METHOD(show_unjudgable_notes, m_show_unjudgable_notes);
 	GET_SET_BOOL_METHOD(speed_segments_enabled, m_speed_segments_enabled);
 	GET_SET_BOOL_METHOD(scroll_segments_enabled, m_scroll_segments_enabled);
+	GET_SET_BOOL_METHOD(add_y_offset_to_position, m_add_y_offset_to_position);
+	GET_SET_BOOL_METHOD(holds_skewed_by_mods, m_holds_skewed_by_mods);
 	static int get_curr_beat(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->get_curr_beat());
@@ -1407,6 +1461,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_GET_SET_METHODS(show_unjudgable_notes);
 		ADD_GET_SET_METHODS(speed_segments_enabled);
 		ADD_GET_SET_METHODS(scroll_segments_enabled);
+		ADD_GET_SET_METHODS(add_y_offset_to_position);
+		ADD_GET_SET_METHODS(holds_skewed_by_mods);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
 		ADD_METHOD(set_pixels_visible_before);

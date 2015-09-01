@@ -9,6 +9,24 @@ struct lua_State;
 struct CubicSpline
 {
 CubicSpline() :m_spatial_extent(0.0f) {}
+	void solve(bool loop, bool polygonal)
+	{
+		if(polygonal)
+		{
+			solve_polygonal();
+		}
+		else
+		{
+			if(loop)
+			{
+				solve_looped();
+			}
+			else
+			{
+				solve_straight();
+			}
+		}
+	}
 	void solve_looped();
 	void solve_straight();
 	void solve_polygonal();

@@ -44,6 +44,7 @@ static const char* ModFunctionTypeNames[] = {
 	"Power",
 	"Log",
 	"Sine",
+	"Tan",
 	"Square",
 	"Triangle",
 	"Spline",
@@ -389,21 +390,7 @@ void ModInput::load_from_lua(lua_State* L, int index)
 				m_spline.set_point(p, lua_tonumber(L, -1));
 				lua_pop(L, 1);
 			}
-			if(m_polygonal_spline)
-			{
-				m_spline.solve_polygonal();
-			}
-			else
-			{
-				if(m_loop_spline)
-				{
-					m_spline.solve_looped();
-				}
-				else
-				{
-					m_spline.solve_straight();
-				}
-			}
+			m_spline.solve(m_loop_spline, m_polygonal_spline);
 		}
 		lua_pop(L, 1);
 	}
@@ -662,6 +649,17 @@ struct ModFunctionSine : ModFunctionWave
 	}
 };
 
+struct ModFunctionTan : ModFunctionWave
+{
+	ModFunctionTan(ModifiableValue* parent)
+		:ModFunctionWave(parent)
+	{}
+	virtual double eval_wave(double const angle)
+	{
+		return tan(angle);
+	}
+};
+
 struct ModFunctionSquare : ModFunctionWave
 {
 	ModFunctionSquare(ModifiableValue* parent)
@@ -776,21 +774,7 @@ struct ModFunctionSpline : ModFunction
 
 	void solve()
 	{
-		if(polygonal)
-		{
-			spline.solve_polygonal();
-		}
-		else
-		{
-			if(loop)
-			{
-				spline.solve_looped();
-			}
-			else
-			{
-				spline.solve_straight();
-			}
-		}
+		spline.solve(loop, polygonal);
 	}
 	void per_frame_solve(mod_val_inputs const& input)
 	{
@@ -894,6 +878,9 @@ static ModFunction* create_field_mod(ModifiableValue* parent, lua_State* L, int 
 			break;
 		case MFT_Sine:
 			ret= new ModFunctionSine(parent);
+			break;
+		case MFT_Tan:
+			ret= new ModFunctionTan(parent);
 			break;
 		case MFT_Square:
 			ret= new ModFunctionSquare(parent);

@@ -538,7 +538,7 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 			RageVec3Cross(&render_left, &pos_z_vec, &render_forward);
 		}
 		RageAARotate(&render_left, &render_forward, -curr_step.trans.rot.y);
-		render_left*= (.5 * note_size) * curr_step.trans.zoom.x;
+		render_left*= (.5 * m_newskin->get_width()) * curr_step.trans.zoom.x;
 		// Hold caps need to not be squished by the reverse_scale.
 		double render_y= curr_y;
 		if(m_add_y_offset_to_position)
@@ -1300,7 +1300,14 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 		LuaHelpers::ReportScriptError("Error loading noteskin: " + insanity);
 		return;
 	}
-	const Style::ColumnInfo* colinfo= curr_style->m_ColumnInfo[1];
+	m_field_width= 0.0;
+	for(size_t i= 0; i < m_newskin.num_columns(); ++i)
+	{
+		m_field_width+= m_newskin.get_column(i)->get_width();
+		m_field_width+= m_newskin.get_column(i)->get_padding();
+	}
+	send_width_to_board();
+	double curr_x= (m_field_width * -.5);
 	m_timing_data= timing;
 	m_columns.clear();
 	m_columns.resize(m_note_data->GetNumTracks());
@@ -1309,8 +1316,16 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 	// else when styles are removed.
 	for(size_t i= 0; i < m_columns.size(); ++i)
 	{
-		m_columns[i].set_column_info(i, m_newskin.get_column(i), m_newskin,
-			m_note_data, m_timing_data, colinfo[i].fXOffset);
+		NewSkinColumn* col= m_newskin.get_column(i);
+		// curr_x is at the left edge of the column at the beginning of the loop.
+		// To put the column in the center, we add half the width of the current
+		// column, place the column, then add the other half of the width.  This
+		// allows columns to have different widths.
+		double halfw= (col->get_width() + col->get_padding()) * .5;
+		curr_x+= halfw;
+		m_columns[i].set_column_info(i, col, m_newskin,
+			m_note_data, m_timing_data, curr_x);
+		curr_x+= halfw;
 	}
 }
 
@@ -1487,11 +1502,17 @@ struct LunaNewField : Luna<NewField>
 		p->push_columns_to_lua(L);
 		return 1;
 	}
+	static int get_width(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_field_width());
+		return 1;
+	}
 	GET_TRANS(trans);
 	LunaNewField()
 	{
 		ADD_METHOD(set_steps);
 		ADD_METHOD(get_columns);
+		ADD_METHOD(get_width);
 		ADD_TRANS(trans);
 	}
 };

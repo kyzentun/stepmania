@@ -12,6 +12,9 @@ using std::string;
 using std::unordered_set;
 using std::vector;
 
+static const double default_column_width= 64.0;
+static const double default_column_padding= 0.0;
+
 static const char* NewSkinTapPartNames[] = {
 	"Tap",
 	"Mine",
@@ -521,6 +524,8 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 	lua_getfield(L, index, "rotations");
 	load_enum_table(L, lua_gettop(L), NSTP_Tap, NUM_NewSkinTapPart,
 		temp_rotations, 0.0, 1000.0, 0.0);
+	m_width= get_optional_double(L, index, "width", default_column_width);
+	m_padding= get_optional_double(L, index, "padding", default_column_padding);
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	m_taps.swap(temp_taps);

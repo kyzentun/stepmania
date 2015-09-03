@@ -224,6 +224,8 @@ struct NewSkinColumn
 	void get_hold_render_data(TapNoteSubType sub_type, bool active,
 		bool reverse, double quantization, double beat,
 		QuantizedHoldRenderData& data);
+	double get_width() { return m_width; }
+	double get_padding() { return m_padding; }
 	bool load_holds_from_lua(lua_State* L, int index,
 		std::vector<std::vector<QuantizedHold> >& holder,
 		std::string const& holds_name,
@@ -289,6 +291,8 @@ private:
 	// So the noteskin can set taps to rotate 90 degrees in this column and
 	// mines to rotate 0, and taps will be rotated and mines won't.
 	std::vector<double> m_rotations;
+	double m_width;
+	double m_padding;
 };
 
 struct NewSkinLayer
@@ -311,6 +315,7 @@ struct NewSkinData
 		}
 		return &m_columns[column];
 	}
+	size_t num_columns() { return m_columns.size(); }
 	bool load_taps_from_lua(lua_State* L, int index, size_t columns, std::string const& load_dir, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
 

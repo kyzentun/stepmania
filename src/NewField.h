@@ -221,6 +221,7 @@ struct NewField : ActorFrame
 	virtual NewField* Copy() const;
 
 	void push_columns_to_lua(lua_State* L);
+	double get_field_width() { return m_field_width; }
 
 	void clear_steps();
 	void set_skin(RString const& skin_name);
@@ -233,6 +234,12 @@ struct NewField : ActorFrame
 	{
 		Message msg("PlayerStateSet");
 		msg.SetParam("PlayerNumber", pn);
+		m_board->HandleMessage(msg);
+	}
+	void send_width_to_board()
+	{
+		Message msg("WidthSet");
+		msg.SetParam("Width", get_field_width());
 		m_board->HandleMessage(msg);
 	}
 
@@ -248,6 +255,7 @@ struct NewField : ActorFrame
 private:
 	double m_curr_beat;
 	double m_curr_second;
+	double m_field_width;
 
 	bool m_own_note_data;
 	NoteData* m_note_data;

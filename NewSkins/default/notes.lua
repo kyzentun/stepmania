@@ -148,6 +148,16 @@ return function(button_list)
 		local hold_tex= hold_buttons[button] .. "_hold 8x4.png"
 		local roll_tex= roll_buttons[button] .. "_roll 8x4.png"
 		columns[i]= {
+			-- The width parameter specifies how wide the column is in pixels.
+			-- Different columns are allowed to be different widths.
+			-- Holds in this column will be stretched to this width.
+			-- If the width is not provided by the noteskin, the default of 64 will
+			-- be used.
+			width= 64,
+			-- The padding is the distance between this column and the adjacent
+			-- column.  A padding value of 2 means 1 pixel on each side.
+			-- The default is 0.
+			padding= 0,
 			taps= {
 				NewSkinTapPart_Tap= {
 					state_map= tap_state_map,

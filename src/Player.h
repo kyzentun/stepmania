@@ -54,6 +54,9 @@ public:
 	// to lua. -Kyz
 	void PushPlayerMatrix(float x, float skew, float center_y);
 	void PopPlayerMatrix();
+	bool m_disable_player_matrix_because_newfield_does_skewing;
+
+	void set_newfield_preferred(bool use_new);
 
 	// This exists so that the board can be drawn underneath combo/judge. -Kyz
 	void DrawNoteFieldBoard();

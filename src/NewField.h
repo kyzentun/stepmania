@@ -207,6 +207,17 @@ private:
 	double last_y_offset_visible;
 };
 
+enum FieldVanishType
+{
+	FVT_RelativeToParent,
+	FVT_RelativeToSelf,
+	FVT_RelativeToOrigin,
+	NUM_FieldVanishType,
+	FieldVanishType_Invalid
+};
+const RString& FieldVanishTypeToString(FieldVanishType fmt);
+LuaDeclareType(FieldVanishType);
+
 struct NewField : ActorFrame
 {
 	NewField();
@@ -251,6 +262,16 @@ struct NewField : ActorFrame
 
 	ModManager m_mod_manager;
 	ModifiableTransform m_trans_mod;
+	ModifiableValue m_fov_mod;
+	ModifiableValue m_vanish_x_mod;
+	ModifiableValue m_vanish_y_mod;
+	// To allow the Player actor the field is inside to be moved around without
+	// causing skew problems, the field adds the vanish position to the actor
+	// position.  m_vanish_type tells the field whether to look at its parent,
+	// itself, or nothing when offsetting the vanish point.
+	// The relative to self and relative to nothing choices exist for when a
+	// field is displayed without a player actor.
+	FieldVanishType m_vanish_type;
 
 private:
 	double m_curr_beat;

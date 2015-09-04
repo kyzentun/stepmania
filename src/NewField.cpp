@@ -1,6 +1,7 @@
 #include "global.h"
 
 #include "ActorUtil.h"
+#include "EnumHelper.h"
 #include "Game.h"
 #include "GameManager.h"
 #include "GameState.h"
@@ -1143,8 +1144,18 @@ void NewFieldColumn::DrawPrimitives()
 
 REGISTER_ACTOR_CLASS(NewField);
 
+static const char* FieldVanishTypeNames[] = {
+	"RelativeToParent",
+	"RelativeToSelf",
+	"RelativeToOrigin"
+};
+XToString(FieldVanishType);
+LuaXType(FieldVanishType);
+
 NewField::NewField()
-	:m_trans_mod(&m_mod_manager),
+	:m_trans_mod(&m_mod_manager), m_fov_mod(&m_mod_manager, 45.0),
+	 m_vanish_x_mod(&m_mod_manager, 0.0), m_vanish_y_mod(&m_mod_manager, 0.0),
+	 m_vanish_type(FVT_RelativeToParent),
 	 m_own_note_data(false), m_note_data(nullptr), m_timing_data(nullptr),
 	 m_drawing_board(false)
 {
@@ -1179,6 +1190,22 @@ bool NewField::EarlyAbortDraw() const
 void NewField::PreDraw()
 {
 	mod_val_inputs input(m_curr_beat, m_curr_second);
+	SetFOV(m_fov_mod.evaluate(input));
+	double vanish_x= m_vanish_x_mod.evaluate(input);
+	double vanish_y= m_vanish_y_mod.evaluate(input);
+	switch(m_vanish_type)
+	{
+		case FVT_RelativeToParent:
+			vanish_x+= GetParent()->GetX();
+			vanish_y+= GetParent()->GetY();
+		case FVT_RelativeToSelf:
+			vanish_x+= GetX();
+			vanish_y+= GetY();
+			break;
+		default:
+			break;
+	}
+	SetVanishPoint(vanish_x, vanish_y);
 	transform trans;
 	m_trans_mod.evaluate(input, trans);
 	set_transform(trans);
@@ -1312,6 +1339,10 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 	m_columns.clear();
 	m_columns.resize(m_note_data->GetNumTracks());
 	m_trans_mod.set_timing(timing);
+	for(auto&& moddable : {&m_fov_mod, &m_vanish_x_mod, &m_vanish_y_mod})
+	{
+		moddable->set_timing(timing);
+	}
 	// The column needs all of this info.  fXOffset might come from somewhere
 	// else when styles are removed.
 	for(size_t i= 0; i < m_columns.size(); ++i)
@@ -1508,12 +1539,29 @@ struct LunaNewField : Luna<NewField>
 		return 1;
 	}
 	GET_TRANS(trans);
+	GET_MEMBER(fov_mod);
+	GET_MEMBER(vanish_x_mod);
+	GET_MEMBER(vanish_y_mod);
+	static int get_vanish_type(T* p, lua_State* L)
+	{
+		Enum::Push(L, p->m_vanish_type);
+		return 1;
+	}
+	static int set_vanish_type(T* p, lua_State* L)
+	{
+		p->m_vanish_type= Enum::Check<FieldVanishType>(L, 1);
+		COMMON_RETURN_SELF;
+	}
 	LunaNewField()
 	{
 		ADD_METHOD(set_steps);
 		ADD_METHOD(get_columns);
 		ADD_METHOD(get_width);
 		ADD_TRANS(trans);
+		ADD_METHOD(get_fov_mod);
+		ADD_METHOD(get_vanish_x_mod);
+		ADD_METHOD(get_vanish_y_mod);
+		ADD_GET_SET_METHODS(vanish_type);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewField, ActorFrame);

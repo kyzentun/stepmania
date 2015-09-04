@@ -277,6 +277,7 @@ public:
 	}
 	DEFINE_METHOD( GetHealthState, m_HealthState );
 	DEFINE_METHOD( GetSuperMeterLevel, m_fSuperMeter );
+	DEFINE_METHOD(get_read_bpm, m_fReadBPM);
 
 	LunaPlayerState()
 	{
@@ -292,6 +293,7 @@ public:
 		ADD_METHOD( GetSongPosition );
 		ADD_METHOD( GetHealthState );
 		ADD_METHOD( GetSuperMeterLevel );
+		ADD_METHOD(get_read_bpm);
 	}
 };
 

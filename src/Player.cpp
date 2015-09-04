@@ -238,6 +238,7 @@ float Player::GetWindowSeconds( TimingWindow tw )
 
 Player::Player( NoteData &nd, bool bVisibleParts ) : m_NoteData(nd)
 {
+	m_disable_player_matrix_because_newfield_does_skewing= false;
 	m_drawing_notefield_board= false;
 	m_bLoaded = false;
 
@@ -571,6 +572,33 @@ void Player::Init(
 
 	m_fActiveRandomAttackStart = -1.0f;
 }
+
+void Player::set_newfield_preferred(bool use_new)
+{
+	double old_hiber= 0.0;
+	double new_hiber= 0.0;
+	if(use_new)
+	{
+		old_hiber= FLT_MAX;
+		new_hiber= 0.0;
+		m_disable_player_matrix_because_newfield_does_skewing= true;
+	}
+	else
+	{
+		old_hiber= 0.0;
+		new_hiber= FLT_MAX;
+		m_disable_player_matrix_because_newfield_does_skewing= false;
+	}
+	if(m_pNoteField != nullptr)
+	{
+		m_pNoteField->SetHibernate(old_hiber);
+	}
+	if(m_new_field != nullptr)
+	{
+		m_new_field->SetHibernate(new_hiber);
+	}
+}
+
 /**
  * @brief Determine if a TapNote needs a tap note style judgment.
  * @param tn the TapNote in question.
@@ -1646,6 +1674,10 @@ void Player::DrawPrimitives()
 
 void Player::PushPlayerMatrix(float x, float skew, float center_y)
 {
+	if(m_disable_player_matrix_because_newfield_does_skewing)
+	{
+		return;
+	}
 	DISPLAY->CameraPushMatrix();
 	DISPLAY->PushMatrix();
 	DISPLAY->LoadMenuPerspective(45, SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -1654,6 +1686,10 @@ void Player::PushPlayerMatrix(float x, float skew, float center_y)
 
 void Player::PopPlayerMatrix()
 {
+	if(m_disable_player_matrix_because_newfield_does_skewing)
+	{
+		return;
+	}
 	DISPLAY->CameraPopMatrix();
 	DISPLAY->PopMatrix();
 }
@@ -3696,12 +3732,18 @@ public:
 		p->GetPlayerTimingData().PushSelf(L);
 		return 1;
 	}
+	static int set_newfield_preferred(T* p, lua_State* L)
+	{
+		p->set_newfield_preferred(BArg(1));
+		COMMON_RETURN_SELF;
+	}
 
 	LunaPlayer()
 	{
 		ADD_METHOD( SetActorWithJudgmentPosition );
 		ADD_METHOD( SetActorWithComboPosition );
 		ADD_METHOD( GetPlayerTimingData );
+		ADD_METHOD(set_newfield_preferred);
 	}
 };
 

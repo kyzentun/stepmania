@@ -16,4 +16,8 @@ return {
 	-- steps, or whatever.
 	supports_all_buttons= false,
 	buttons= {"Left", "Down", "Up", "Right"},
+	-- The fallback entry is optional.  It can be used to name another noteskin
+	-- to fall back on if a hold texture or one of the files listed above is
+	-- not found.
+	fallback= "",
 }

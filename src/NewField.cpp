@@ -1271,7 +1271,7 @@ void NewField::clear_steps()
 
 void NewField::set_skin(RString const& skin_name)
 {
-	NewSkinLoader const* loader= NEWSKIN->GetLoaderForSkin(skin_name);
+	NewSkinLoader const* loader= NEWSKIN->get_loader_for_skin(skin_name);
 	if(loader != nullptr)
 	{
 		m_skin_walker= *loader;

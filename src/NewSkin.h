@@ -68,6 +68,8 @@ enum NewSkinHoldPart
 const RString& NewSkinHoldPartToString(NewSkinHoldPart nsp);
 LuaDeclareType(NewSkinHoldPart);
 
+struct NewSkinLoader;
+
 struct QuantizedStateMap
 {
 	static const size_t max_quanta= 256;
@@ -213,7 +215,7 @@ struct QuantizedHold
 		ret.flip= m_flip;
 		ret.part_lengths= m_part_lengths;
 	}
-	bool load_from_lua(lua_State* L, int index, std::string const& load_dir, std::string& insanity_diagnosis);
+	bool load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 };
 
 struct NewSkinColumn
@@ -229,8 +231,8 @@ struct NewSkinColumn
 	bool load_holds_from_lua(lua_State* L, int index,
 		std::vector<std::vector<QuantizedHold> >& holder,
 		std::string const& holds_name,
-		std::string const& load_dir, std::string& insanity_diagnosis);
-	bool load_from_lua(lua_State* L, int index, std::string const& load_dir,
+		NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
+	bool load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin,
 		std::string& insanity_diagnosis);
 	void vivid_operation(bool vivid)
 	{
@@ -316,7 +318,7 @@ struct NewSkinData
 		return &m_columns[column];
 	}
 	size_t num_columns() { return m_columns.size(); }
-	bool load_taps_from_lua(lua_State* L, int index, size_t columns, std::string const& load_dir, std::string& insanity_diagnosis);
+	bool load_taps_from_lua(lua_State* L, int index, size_t columns, NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
 
 	// The layers are public so that the NewFieldColumns can go through and
@@ -334,9 +336,17 @@ struct NewSkinLoader
 	NewSkinLoader()
 		:m_supports_all_buttons(false)
 	{}
-	std::string const& get_name()
+	std::string const& get_name() const
 	{
 		return m_skin_name;
+	}
+	std::string const& get_fallback_name() const
+	{
+		return m_fallback_skin_name;
+	}
+	std::string const& get_load_path() const
+	{
+		return m_load_path;
 	}
 	bool load_from_file(std::string const& path);
 	bool load_from_lua(lua_State* L, int index, std::string const& name,
@@ -350,6 +360,7 @@ struct NewSkinLoader
 		NewSkinData& dest, std::string& insanity_diagnosis);
 private:
 	std::string m_skin_name;
+	std::string m_fallback_skin_name;
 	std::string m_load_path;
 	std::string m_notes_loader;
 	std::vector<std::string> m_below_loaders;

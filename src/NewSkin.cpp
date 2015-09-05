@@ -2,6 +2,7 @@
 
 #include "ActorUtil.h"
 #include "NewSkin.h"
+#include "NewSkinManager.h"
 #include "RageFileManager.h"
 #include "RageTextureManager.h"
 #include "XmlFile.h"
@@ -256,7 +257,7 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 	return true;
 }
 
-bool QuantizedHold::load_from_lua(lua_State* L, int index, string const& load_dir, string& insanity_diagnosis)
+bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, string& insanity_diagnosis)
 {
 	// Pop the table we're loading from off the stack when returning.
 	int original_top= lua_gettop(L) - 1;
@@ -307,14 +308,8 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, string const& load_di
 		}
 		else
 		{
-			bool is_relative= path[0] != '/';
-			if(is_relative)
-			{
-				path= load_dir + path;
-			}
-			RString resolved= path;
-			if(!ActorUtil::ResolvePath(resolved, "Noteskin hold texture", false) ||
-				!FILEMAN->DoesFileExist(resolved))
+			RString resolved= NEWSKIN->get_path_to_file_in_skin(load_skin, path);
+			if(resolved.empty())
 			{
 				as_tex= TEXTUREMAN->LoadTexture(TEXTUREMAN->GetDefaultTextureID());
 			}
@@ -412,7 +407,7 @@ void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type,
 bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
 	std::vector<std::vector<QuantizedHold> >& holder,
 	std::string const& holds_name,
-	std::string const& load_dir, std::string& insanity_diagnosis)
+	NewSkinLoader const* load_skin, std::string& insanity_diagnosis)
 {
 	string sub_sanity;
 	int original_top= lua_gettop(L);
@@ -442,7 +437,7 @@ bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
 			{
 				RETURN_NOT_SANE(ssprintf("Hold info not given for active state %zu of subtype %s.", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str()));
 			}
-			if(!holder[part][a].load_from_lua(L, lua_gettop(L), load_dir, sub_sanity))
+			if(!holder[part][a].load_from_lua(L, lua_gettop(L), load_skin, sub_sanity))
 			{
 				RETURN_NOT_SANE(ssprintf("Error loading active state %zu of subtype %s: %s", a, TapNoteSubTypeToString(static_cast<TapNoteSubType>(part)).c_str(), sub_sanity.c_str()));
 			}
@@ -453,7 +448,7 @@ bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
 	return true;
 }
 
-bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_dir, string& insanity_diagnosis)
+bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, string& insanity_diagnosis)
 {
 	// Pop the table we're loading from off the stack when returning.
 	int original_top= lua_gettop(L) - 1;
@@ -511,12 +506,12 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, string const& load_di
 		}
 	}
 	lua_settop(L, optional_taps_index-1);
-	if(!load_holds_from_lua(L, index, temp_holds, "holds", load_dir,
+	if(!load_holds_from_lua(L, index, temp_holds, "holds", load_skin,
 			insanity_diagnosis))
 	{
 		RETURN_NOT_SANE(insanity_diagnosis);
 	}
-	if(!load_holds_from_lua(L, index, temp_reverse_holds, "reverse_holds", load_dir,
+	if(!load_holds_from_lua(L, index, temp_reverse_holds, "reverse_holds", load_skin,
 			insanity_diagnosis))
 	{
 		RETURN_NOT_SANE(insanity_diagnosis);
@@ -578,7 +573,7 @@ NewSkinData::NewSkinData()
 	
 }
 
-bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, string const& load_dir, string& insanity_diagnosis)
+bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, NewSkinLoader const* load_skin, string& insanity_diagnosis)
 {
 	//lua_pushvalue(L, index);
 	//LuaHelpers::rec_print_table(L, "newskin_data", "");
@@ -604,7 +599,7 @@ bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, st
 		{
 			RETURN_NOT_SANE(ssprintf("Nothing given for column %zu.", c+1));
 		}
-		if(!temp_columns[c].load_from_lua(L, lua_gettop(L), load_dir, sub_sanity))
+		if(!temp_columns[c].load_from_lua(L, lua_gettop(L), load_skin, sub_sanity))
 		{
 			RETURN_NOT_SANE(ssprintf("Error loading column %zu: %s", c+1, sub_sanity.c_str()));
 		}
@@ -724,6 +719,16 @@ bool NewSkinLoader::load_from_lua(lua_State* L, int index, string const& name,
 		RETURN_NOT_SANE("No notes loader found.");
 	}
 	m_notes_loader= lua_tostring(L, -1);
+	lua_pop(L, 1);
+	lua_getfield(L, index, "fallback");
+	if(lua_isstring(L, -1))
+	{
+		m_fallback_skin_name= lua_tostring(L, -1);
+	}
+	else
+	{
+		m_fallback_skin_name.clear();
+	}
 	lua_pop(L, 1);
 	lua_getfield(L, index, "supports_all_buttons");
 	m_supports_all_buttons= lua_toboolean(L, -1);
@@ -845,22 +850,22 @@ bool NewSkinLoader::push_loader_function(lua_State* L, string const& loader)
 	{
 		return false;
 	}
-	string file= m_load_path + loader;
-	if(!FILEMAN->IsAFile(file))
+	string found_path= NEWSKIN->get_path_to_file_in_skin(this, loader);
+	if(found_path.empty())
 	{
 		LuaHelpers::ReportScriptError("Noteskin " + m_skin_name + " points to a"
-			" loader file that does not exist: " + file);
+			" loader file that does not exist: " + loader);
 		return false;
 	}
 	RString script_text;
-	if(!GetFileContents(file, script_text))
+	if(!GetFileContents(found_path, script_text))
 	{
 		LuaHelpers::ReportScriptError("Noteskin " + m_skin_name + " points to a"
-			" loader file " + file + " could not be loaded.");
+			" loader file " + found_path + " could not be loaded.");
 		return false;
 	}
-	RString error= "Error loading " + file + ": ";
-	if(!LuaHelpers::RunScript(L, script_text, "@" + file, error, 0, 1, true))
+	RString error= "Error loading " + found_path + ": ";
+	if(!LuaHelpers::RunScript(L, script_text, "@" + found_path, error, 0, 1, true))
 	{
 		return false;
 	}
@@ -923,7 +928,7 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 		RETURN_NOT_SANE("Error running loader for notes.");
 	}
 	string sub_sanity;
-	if(!dest.load_taps_from_lua(L, lua_gettop(L), button_list.size(), m_load_path, sub_sanity))
+	if(!dest.load_taps_from_lua(L, lua_gettop(L), button_list.size(), this, sub_sanity))
 	{
 		RETURN_NOT_SANE("Invalid data from loader: " + sub_sanity);
 	}

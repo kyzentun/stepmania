@@ -1,5 +1,6 @@
 #include "global.h"
 
+#include "ActorUtil.h"
 #include "NewSkinManager.h"
 #include "RageFileManager.h"
 #include "SpecialFiles.h"
@@ -17,7 +18,7 @@ NewSkinManager::NewSkinManager()
 	lua_settable(L, LUA_GLOBALSINDEX);
 	LUA->Release(L);
 
-	LoadSkins();
+	load_skins();
 }
 
 NewSkinManager::~NewSkinManager()
@@ -26,7 +27,7 @@ NewSkinManager::~NewSkinManager()
 	LUA->UnsetGlobal("NEWSKIN");
 }
 
-void NewSkinManager::LoadSkins()
+void NewSkinManager::load_skins()
 {
 	vector<RString> dirs;
 	FILEMAN->GetDirListing(SpecialFiles::NEWSKINS_DIR, dirs, true, true);
@@ -65,7 +66,7 @@ void NewSkinManager::LoadSkins()
 	}
 }
 
-void NewSkinManager::GetSkinsForStepsType(StepsType type, std::vector<NewSkinLoader const*>& ret)
+void NewSkinManager::get_skins_for_stepstype(StepsType type, std::vector<NewSkinLoader const*>& ret)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -76,7 +77,7 @@ void NewSkinManager::GetSkinsForStepsType(StepsType type, std::vector<NewSkinLoa
 	}
 }
 
-void NewSkinManager::GetSkinNamesForStepsType(StepsType type, std::vector<RString>& ret)
+void NewSkinManager::get_skin_names_for_stepstype(StepsType type, std::vector<RString>& ret)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -87,12 +88,12 @@ void NewSkinManager::GetSkinNamesForStepsType(StepsType type, std::vector<RStrin
 	}
 }
 
-std::vector<StepsType> const& NewSkinManager::GetSupportedStepsTypes()
+std::vector<StepsType> const& NewSkinManager::get_supported_stepstypes()
 {
 	return m_supported_types;
 }
 
-NewSkinLoader const* NewSkinManager::GetLoaderForSkin(RString const& skin_name)
+NewSkinLoader const* NewSkinManager::get_loader_for_skin(RString const& skin_name)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -104,6 +105,46 @@ NewSkinLoader const* NewSkinManager::GetLoaderForSkin(RString const& skin_name)
 	return nullptr;
 }
 
+std::string NewSkinManager::get_path_to_file_in_skin(
+	NewSkinLoader const* skin, std::string file)
+{
+	if(skin == nullptr)
+	{
+		return "";
+	}
+	// Fallback loop cases are detected and silently ignored by storing each
+	// fallback in used_fallbacks.  This allows skins to mutually fall back on
+	// each other if someone really needs to do that.
+	std::unordered_set<std::string> used_fallbacks;
+	std::string next_path= skin->get_load_path();
+	std::string next_fallback= skin->get_fallback_name();
+	std::string found_path;
+	while(!next_path.empty())
+	{
+		RString resolved= next_path + file;
+		next_path.clear();
+		if(ActorUtil::ResolvePath(resolved, skin->get_name(), true))
+		{
+			found_path= resolved;
+			break;
+		}
+		else if(!next_fallback.empty() &&
+			used_fallbacks.find(next_fallback) == used_fallbacks.end())
+		{
+			used_fallbacks.insert(next_fallback);
+			NewSkinLoader const* fallback= get_loader_for_skin(next_fallback);
+			if(fallback != nullptr)
+			{
+				used_fallbacks.insert(next_fallback);
+				next_path= fallback->get_load_path();
+				next_fallback= fallback->get_fallback_name();
+			}
+		}
+	}
+	return found_path;
+}
+
+
 #include "LuaBinding.h"
 
 struct LunaNewSkinManager: Luna<NewSkinManager>
@@ -112,7 +153,7 @@ struct LunaNewSkinManager: Luna<NewSkinManager>
 	{
 		StepsType stype= Enum::Check<StepsType>(L, 1);
 		vector<RString> names;
-		p->GetSkinNamesForStepsType(stype, names);
+		p->get_skin_names_for_stepstype(stype, names);
 		LuaHelpers::CreateTableFromArray(names, L);
 		return 1;
 	}

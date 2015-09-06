@@ -31,6 +31,7 @@ NewFieldColumn::NewFieldColumn()
 	:m_show_unjudgable_notes(true),
 	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
 	 m_add_y_offset_to_position(true), m_holds_skewed_by_mods(true),
+	 m_twirl_holds(true), m_use_moddable_hold_normal(false),
 	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
 	 m_speed_mod(&m_mod_manager, 0.0),
@@ -38,6 +39,7 @@ NewFieldColumn::NewFieldColumn()
 	 m_reverse_percent(&m_mod_manager, 0.0),
 	 m_center_percent(&m_mod_manager, 0.0),
 	 m_note_mod(&m_mod_manager), m_column_mod(&m_mod_manager),
+	 m_hold_normal_mod(&m_mod_manager, 0.0),
 	 m_note_alpha(&m_mod_manager, 1.0), m_note_glow(&m_mod_manager, 0.0),
 	 m_receptor_alpha(&m_mod_manager, 1.0), m_receptor_glow(&m_mod_manager, 0.0),
 	 m_explosion_alpha(&m_mod_manager, 1.0), m_explosion_glow(&m_mod_manager, 0.0),
@@ -87,6 +89,10 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 		moddable->set_timing(timing_data);
 	}
 	for(auto&& moddable : {&m_note_mod, &m_column_mod})
+	{
+		moddable->set_timing(timing_data);
+	}
+	for(auto&& moddable : {&m_hold_normal_mod})
 	{
 		moddable->set_timing(timing_data);
 	}
@@ -530,15 +536,28 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 			RageVec3Normalize(&render_forward, &render_forward);
 		}
 		RageVector3 render_left;
-		if(std::abs(render_forward.z) > 0.9f) // 0.9 arbitrariliy picked.
+		if(m_use_moddable_hold_normal)
 		{
-			RageVec3Cross(&render_left, &pos_y_vec, &render_forward);
+			RageVector3 normal;
+			mod_val_inputs mod_input(curr_step.beat, curr_step.second, m_curr_beat, m_curr_second, curr_step.y);
+			m_hold_normal_mod.evaluate(mod_input, normal);
+			RageVec3Cross(&render_left, &normal, &render_forward);
 		}
 		else
 		{
-			RageVec3Cross(&render_left, &pos_z_vec, &render_forward);
+			if(std::abs(render_forward.y) > 0.9f) // 0.9 arbitrariliy picked.
+			{
+				RageVec3Cross(&render_left, &pos_z_vec, &render_forward);
+			}
+			else
+			{
+				RageVec3Cross(&render_left, &pos_y_vec, &render_forward);
+			}
 		}
-		RageAARotate(&render_left, &render_forward, -curr_step.trans.rot.y);
+		if(m_twirl_holds)
+		{
+			RageAARotate(&render_left, &render_forward, -curr_step.trans.rot.y);
+		}
 		render_left*= (.5 * m_newskin->get_width()) * curr_step.trans.zoom.x;
 		// Hold caps need to not be squished by the reverse_scale.
 		double render_y= curr_y;
@@ -1403,6 +1422,16 @@ static int get_##trans##_##part##_##dim(T* p, lua_State* L) \
 	p->m_##trans##_mod.part##_mod.dim##_mod.PushSelf(L); \
 	return 1; \
 }
+#define GET_VEC_DIM(vec, dim) \
+static int get_##vec##_##dim(T* p, lua_State* L) \
+{ \
+	p->m_##vec##_mod.dim##_mod.PushSelf(L); \
+	return 1; \
+}
+#define GET_VEC(vec) \
+GET_VEC_DIM(vec, x); \
+GET_VEC_DIM(vec, y); \
+GET_VEC_DIM(vec, z);
 #define GET_TRANS_PART(trans, part) \
 GET_TRANS_DIM(trans, part, x); \
 GET_TRANS_DIM(trans, part, y); \
@@ -1411,6 +1440,10 @@ GET_TRANS_DIM(trans, part, z);
 GET_TRANS_PART(trans, pos); \
 GET_TRANS_PART(trans, rot); \
 GET_TRANS_PART(trans, zoom);
+#define ADD_VEC(vec) \
+ADD_METHOD(get_##vec##_x); \
+ADD_METHOD(get_##vec##_y); \
+ADD_METHOD(get_##vec##_z);
 #define ADD_TRANS_PART(trans, part) \
 ADD_METHOD(get_##trans##_##part##_##x); \
 ADD_METHOD(get_##trans##_##part##_##y); \
@@ -1430,6 +1463,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_MEMBER(center_percent);
 	GET_TRANS(note);
 	GET_TRANS(column);
+	GET_VEC(hold_normal);
 	GET_MEMBER(note_alpha);
 	GET_MEMBER(note_glow);
 	GET_MEMBER(receptor_alpha);
@@ -1442,6 +1476,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_SET_BOOL_METHOD(scroll_segments_enabled, m_scroll_segments_enabled);
 	GET_SET_BOOL_METHOD(add_y_offset_to_position, m_add_y_offset_to_position);
 	GET_SET_BOOL_METHOD(holds_skewed_by_mods, m_holds_skewed_by_mods);
+	GET_SET_BOOL_METHOD(twirl_holds, m_twirl_holds);
+	GET_SET_BOOL_METHOD(use_moddable_hold_normal, m_use_moddable_hold_normal);
 	static int get_curr_beat(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->get_curr_beat());
@@ -1497,6 +1533,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_METHOD(get_center_percent);
 		ADD_TRANS(note);
 		ADD_TRANS(column);
+		ADD_VEC(hold_normal);
 		ADD_METHOD(get_note_alpha);
 		ADD_METHOD(get_note_glow);
 		ADD_METHOD(get_receptor_alpha);
@@ -1509,6 +1546,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_GET_SET_METHODS(scroll_segments_enabled);
 		ADD_GET_SET_METHODS(add_y_offset_to_position);
 		ADD_GET_SET_METHODS(holds_skewed_by_mods);
+		ADD_GET_SET_METHODS(twirl_holds);
+		ADD_GET_SET_METHODS(use_moddable_hold_normal);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
 		ADD_METHOD(set_pixels_visible_before);

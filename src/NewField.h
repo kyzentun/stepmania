@@ -130,6 +130,8 @@ struct NewFieldColumn : ActorFrame
 	bool m_scroll_segments_enabled;
 	bool m_add_y_offset_to_position;
 	bool m_holds_skewed_by_mods;
+	bool m_twirl_holds;
+	bool m_use_moddable_hold_normal;
 
 	struct column_status
 	{
@@ -158,6 +160,7 @@ struct NewFieldColumn : ActorFrame
 
 	ModifiableTransform m_note_mod;
 	ModifiableTransform m_column_mod;
+	ModifiableVector3 m_hold_normal_mod;
 
 	ModifiableValue m_note_alpha;
 	ModifiableValue m_note_glow;

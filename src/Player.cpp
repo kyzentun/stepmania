@@ -566,6 +566,7 @@ void Player::Init(
 		m_new_field->set_player_number(GetPlayerState()->m_PlayerNumber);
 		this->AddChild(m_new_field);
 	}
+	set_newfield_preferred(false);
 
 	m_vbFretIsDown.resize( GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_iColsPerPlayer );
 	std::fill(m_vbFretIsDown.begin(), m_vbFretIsDown.end(), false);

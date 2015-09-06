@@ -16,7 +16,7 @@ function set_newfield_speed_mod(newfield, constant, speed, read_bpm)
 		mod_input= {"ModInputType_DistBeat", (speed / read_bpm) / music_rate}
 	end
 	for col in ivalues(newfield:get_columns()) do
-		col:get_speed_mod():add_mod{"ModFunctionType_Constant", mod_input}
+		col:get_speed_mod():add_mod{name= "speed", "ModFunctionType_Constant", mod_input}
 		col:set_show_unjudgable_notes(show_unjudgable)
 		col:set_speed_segments_enabled(speed_segments_enabled)
 		col:set_scroll_segments_enabled(scroll_segments_enabled)

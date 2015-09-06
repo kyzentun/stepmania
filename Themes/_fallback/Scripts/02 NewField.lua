@@ -58,11 +58,16 @@ function set_newfield_reverse(newfield, rev)
 	end
 end
 
-function find_newfield_in_gameplay(screen_gameplay, pn)
+function find_pactor_in_gameplay(screen_gameplay, pn)
 	local pactor= screen_gameplay:GetChild("Player" .. ToEnumShortString(pn))
 	if not pactor then
 		pactor= screen_gameplay:GetChild("Player")
 	end
+	return pactor
+end
+
+function find_newfield_in_gameplay(screen_gameplay, pn)
+	local pactor= find_pactor_in_gameplay(screen_gameplay, pn)
 	if not pactor then
 		return nil
 	end
@@ -87,5 +92,18 @@ function set_newfield_mods(screen_gameplay, pn, revoff)
 		set_newfield_speed_mod(field, true, cmod)
 	else
 		set_newfield_speed_mod(field, false, xmod)
+	end
+end
+
+function use_newfield_on_gameplay(revoff)
+	local screen_gameplay= SCREENMAN:GetTopScreen()
+	if not screen_gameplay.GetLifeMeter then
+		lua.ReportScriptError("use_newfield_on_gameplay can only be called when the current screen is ScreenGameplay.")
+		return
+	end
+	for pn in ivalues(GAMESTATE:GetEnabledPlayers()) do
+		local pactor= find_pactor_in_gameplay(screen_gameplay, pn)
+		pactor:set_newfield_preferred(true)
+		set_newfield_mods(screen_gameplay, pn, revoff)
 	end
 end

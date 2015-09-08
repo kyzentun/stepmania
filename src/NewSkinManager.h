@@ -11,10 +11,12 @@ struct NewSkinManager
 	void load_skins();
 	void get_skins_for_stepstype(StepsType type, std::vector<NewSkinLoader const*>& ret);
 	void get_skin_names_for_stepstype(StepsType type, std::vector<RString>& ret);
+	RString get_first_skin_name_for_stepstype(StepsType type);
 	std::vector<StepsType> const& get_supported_stepstypes();
 	NewSkinLoader const* get_loader_for_skin(RString const& skin_name);
 	std::string get_path_to_file_in_skin(NewSkinLoader const* skin,
 		std::string file);
+	bool named_skin_exists(RString const& skin_name);
 
 	void PushSelf(lua_State* L);
 

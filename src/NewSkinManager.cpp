@@ -88,6 +88,20 @@ void NewSkinManager::get_skin_names_for_stepstype(StepsType type, std::vector<RS
 	}
 }
 
+RString NewSkinManager::get_first_skin_name_for_stepstype(StepsType type)
+{
+	for(auto&& skin : m_skins)
+	{
+		if(skin.supports_needed_buttons(type))
+		{
+			return skin.get_name();
+		}
+	}
+	RString stype_name= StepsTypeToString(type);
+	LuaHelpers::ReportScriptError("No noteskin supports the stepstype " + stype_name);
+	return "default";
+}
+
 std::vector<StepsType> const& NewSkinManager::get_supported_stepstypes()
 {
 	return m_supported_types;
@@ -142,6 +156,18 @@ std::string NewSkinManager::get_path_to_file_in_skin(
 		}
 	}
 	return found_path;
+}
+
+bool NewSkinManager::named_skin_exists(RString const& skin_name)
+{
+	for(auto&& skin : m_skins)
+	{
+		if(skin_name == skin.get_name())
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 

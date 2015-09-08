@@ -697,7 +697,26 @@ void Player::Load()
 
 	if(m_new_field != nullptr)
 	{
-		m_new_field->set_skin(m_pPlayerState->m_PlayerOptions.GetPreferred().m_newskin);
+		// If we're not in the step editor, the player's preferred noteskin for
+		// the current steps type needs to be fetched from their profile.  The
+		// noteskin name stored in the options is not guaranteed to work for the
+		// current stepstype, it might be from the previous song and for a
+		// different stepstype. -Kyz
+		if(!GAMESTATE->m_bInStepEditor)
+		{
+			Profile const* prof= PROFILEMAN->GetProfile(m_pPlayerState->m_PlayerNumber);
+			if(prof != nullptr)
+			{
+				StepsType stype= GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_StepsType;
+				RString skin;
+				prof->get_preferred_noteskin(stype, skin);
+				m_new_field->set_skin(skin);
+			}
+		}
+		else
+		{
+			m_new_field->set_skin(m_pPlayerState->m_PlayerOptions.GetPreferred().m_newskin);
+		}
 	}
 
 	// TODO: Remove use of PlayerNumber.

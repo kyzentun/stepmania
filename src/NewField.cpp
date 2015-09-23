@@ -101,6 +101,16 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	add_heads_from_layers(column, m_heads_above_notes, skin_data.m_layers_above_notes);
 }
 
+double NewFieldColumn::get_beat_from_second(double second)
+{
+	return m_timing_data->GetBeatFromElapsedTime(second);
+}
+
+double NewFieldColumn::get_second_from_beat(double beat)
+{
+	return m_timing_data->GetElapsedTimeFromBeat(beat);
+}
+
 void NewFieldColumn::set_displayed_time(double beat, double second)
 {
 	m_curr_beat= beat;
@@ -180,6 +190,35 @@ double NewFieldColumn::apply_reverse_shift(double y_offset)
 	return (y_offset * reverse_scale) + reverse_shift;
 }
 
+void NewFieldColumn::apply_column_mods_to_actor(Actor* act)
+{
+	mod_val_inputs input(m_curr_beat, m_curr_second);
+	transform trans;
+	m_column_mod.evaluate(input, trans);
+	act->set_transform(trans);
+}
+
+void NewFieldColumn::apply_note_mods_to_actor(Actor* act, double beat,
+	double second, double y_offset, bool use_alpha, bool use_glow)
+{
+	mod_val_inputs mod_input(beat, second, m_curr_beat, m_curr_beat, y_offset);
+	if(use_alpha)
+	{
+		act->SetDiffuseAlpha(m_note_alpha.evaluate(mod_input));
+	}
+	if(use_glow)
+	{
+		act->SetGlow(RageColor(1, 1, 1, m_note_glow.evaluate(mod_input)));
+	}
+	transform trans;
+	calc_transform(mod_input, trans);
+	if(m_add_y_offset_to_position)
+	{
+		trans.pos.y+= apply_reverse_shift(y_offset);
+	}
+	act->set_transform(trans);
+}
+
 void NewFieldColumn::UpdateInternal(float delta)
 {
 	calc_reverse_shift();
@@ -225,21 +264,19 @@ struct strip_buffer
 		// added to draw.  Move the last three verts to the beginning of the
 		// buffer so that the vert calculating loop doesn't have to redo the work
 		// for them.
-		if(used() > 3)
+		if(used() > 2)
 		{
-			buf[0]= v[-3];
-			buf[1]= v[-2];
-			buf[2]= v[-1];
-			v= buf + 3;
-			glow_buf[0]= glow_v[-3];
-			glow_buf[1]= glow_v[-2];
-			glow_buf[2]= glow_v[-1];
-			glow_v= glow_buf + 3;
+			buf[0]= v[-2];
+			buf[1]= v[-1];
+			v= buf + 2;
+			glow_buf[0]= glow_v[-2];
+			glow_buf[1]= glow_v[-1];
+			glow_v= glow_buf + 2;
 		}
 	}
 	void draw()
 	{
-		DISPLAY->DrawSymmetricQuadStrip(buf, v-buf);
+		DISPLAY->DrawQuadStrip(buf, v-buf);
 	}
 	void swap_glow()
 	{
@@ -411,12 +448,11 @@ struct hold_time_lerper
 };
 
 static void add_vert_strip(float const tex_y, strip_buffer& verts_to_draw,
-	RageVector3 const& left, RageVector3 const& center,
+	RageVector3 const& left,
 	RageVector3 const& right, RageColor const& color, RageColor const& glow_color,
-	float const tex_left, double const tex_center, float const tex_right)
+	float const tex_left, float const tex_right)
 {
 	verts_to_draw.add_vert(left, color, glow_color, RageVector2(tex_left, tex_y));
-	verts_to_draw.add_vert(center, color, glow_color, RageVector2(tex_center, tex_y));
 	verts_to_draw.add_vert(right, color, glow_color, RageVector2(tex_right, tex_y));
 }
 
@@ -501,8 +537,9 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	hold_texture_handler tex_handler(note_size, head_y_offset, tail_y_offset, tex_top, tex_bottom, data);
 	double const body_start_render_y= apply_reverse_shift(tex_handler.body_start_y);
 	double const body_end_render_y= apply_reverse_shift(tex_handler.body_end_y);
-	double const tex_center= (tex_left + tex_right) * .5;
 	DISPLAY->ClearAllTextures();
+	DISPLAY->SetZTestMode(ZTEST_WRITE_ON_PASS);
+	DISPLAY->SetZWrite(true);
 	bool last_vert_set= false;
 	// Set a start and end y so that the hold can be clipped to the start and
 	// end of the field.
@@ -554,7 +591,7 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 				RageVec3Cross(&render_left, &pos_y_vec, &render_forward);
 			}
 		}
-		if(m_twirl_holds)
+		if(m_twirl_holds && curr_step.trans.rot.y != 0.0)
 		{
 			RageAARotate(&render_left, &render_forward, -curr_step.trans.rot.y);
 		}
@@ -587,17 +624,18 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 		const RageVector3 left_vert(
 			render_left.x + curr_step.trans.pos.x, render_y + render_left.y,
 			render_left.z + curr_step.trans.pos.z);
-		const RageVector3 center_vert(curr_step.trans.pos.x, render_y, 0 + curr_step.trans.pos.z);
-		const RageVector3 right_vert(-render_left.x + curr_step.trans.pos.x, render_y -render_left.y, -render_left.z + curr_step.trans.pos.z);
+		const RageVector3 right_vert(
+			-render_left.x + curr_step.trans.pos.x, render_y -render_left.y,
+			-render_left.z + curr_step.trans.pos.z);
 		const RageColor color(1.0, 1.0, 1.0, curr_step.alpha);
 		const RageColor glow_color(1.0, 1.0, 1.0, curr_step.glow);
-#define add_vert_strip_args verts_to_draw, left_vert, center_vert, right_vert, color, glow_color, tex_left, tex_center, tex_right
+#define add_vert_strip_args verts_to_draw, left_vert, right_vert, color, glow_color, tex_left, tex_right
 		for(size_t i= 0; i < curr_step.tex_coords.size(); ++i)
 		{
 			add_vert_strip(curr_step.tex_coords[i], add_vert_strip_args);
 		}
 #undef add_vert_strip_args
-		if(verts_to_draw.avail() < 9 || last_vert_set)
+		if(verts_to_draw.avail() < 6 || last_vert_set)
 		{
 			DISPLAY->SetTextureMode(TextureUnit_1, TextureMode_Modulate);
 			DISPLAY->SetCullMode(CULL_NONE);
@@ -1198,6 +1236,7 @@ void NewField::UpdateInternal(float delta)
 	{
 		col.Update(delta);
 	}
+	m_board->Update(delta);
 	ActorFrame::UpdateInternal(delta);
 }
 
@@ -1347,12 +1386,30 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 		return;
 	}
 	m_field_width= 0.0;
+	Lua* L= LUA->Get();
+	lua_createtable(L, m_newskin.num_columns(), 0);
 	for(size_t i= 0; i < m_newskin.num_columns(); ++i)
 	{
-		m_field_width+= m_newskin.get_column(i)->get_width();
-		m_field_width+= m_newskin.get_column(i)->get_padding();
+		double width= m_newskin.get_column(i)->get_width();
+		double padding= m_newskin.get_column(i)->get_padding();
+		lua_createtable(L, 0, 2);
+		lua_pushnumber(L, width);
+		lua_setfield(L, -2, "width");
+		lua_pushnumber(L, padding);
+		lua_setfield(L, -2, "padding");
+		lua_rawseti(L, -2, i+1);
+		m_field_width+= width;
+		m_field_width+= padding;
 	}
-	send_width_to_board();
+	Message width_msg("WidthSet");
+	width_msg.SetParam("width", get_field_width());
+	width_msg.SetParamFromStack(L, "columns");
+	PushSelf(L);
+	width_msg.SetParamFromStack(L, "newfield");
+	// Handle the width message after the columns have been created so that the
+	// board can fetch the columns. (intentionally duplicated comment)
+	LUA->Release(L);
+
 	double curr_x= (m_field_width * -.5);
 	m_timing_data= timing;
 	m_columns.clear();
@@ -1377,6 +1434,16 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 			m_note_data, m_timing_data, curr_x);
 		curr_x+= halfw;
 	}
+	// Handle the width message after the columns have been created so that the
+	// board can fetch the columns.
+	m_board->HandleMessage(width_msg);
+}
+
+void NewField::set_player_number(PlayerNumber pn)
+{
+	Message msg("PlayerStateSet");
+	msg.SetParam("PlayerNumber", pn);
+	m_board->HandleMessage(msg);
 }
 
 void NewField::update_displayed_time(double beat, double second)
@@ -1523,6 +1590,58 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		lua_pushnumber(L, p->get_reverse_scale());
 		return 1;
 	}
+	static int apply_column_mods_to_actor(T* p, lua_State* L)
+	{
+		Actor* act= Luna<Actor>::check(L, 1);
+		p->apply_column_mods_to_actor(act);
+		COMMON_RETURN_SELF;
+	}
+	static int apply_note_mods_to_actor(T* p, lua_State* L)
+	{
+		Actor* act= Luna<Actor>::check(L, 1);
+		bool time_is_offset= lua_toboolean(L, 2);
+		double beat= p->get_curr_beat();
+		double second= p->get_curr_beat();
+		double y_offset= 0;
+		static const int bindex= 3;
+		static const int sindex= 4;
+		if(lua_isnumber(L, bindex))
+		{
+			beat= lua_tonumber(L, bindex);
+			if(time_is_offset)
+			{
+				beat+= p->get_curr_beat();
+			}
+			if(!lua_isnumber(L, sindex))
+			{
+				second= p->get_second_from_beat(beat);
+			}
+		}
+		if(lua_isnumber(L, sindex))
+		{
+			second= lua_tonumber(L, sindex);
+			if(time_is_offset)
+			{
+				second+= p->get_curr_second();
+			}
+			if(!lua_isnumber(L, bindex))
+			{
+				beat= p->get_beat_from_second(second);
+			}
+		}
+		if(lua_isnumber(L, 5))
+		{
+			y_offset= lua_tonumber(L, 5);
+		}
+		else
+		{
+			y_offset= p->calc_y_offset(beat, second);
+		}
+		bool use_alpha= lua_toboolean(L, 6);
+		bool use_glow= lua_toboolean(L, 7);
+		p->apply_note_mods_to_actor(act, beat, second, y_offset, use_alpha, use_glow);
+		COMMON_RETURN_SELF;
+	}
 	LunaNewFieldColumn()
 	{
 		ADD_METHOD(get_quantization_multiplier);
@@ -1555,6 +1674,8 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_METHOD(receptor_y_offset);
 		ADD_METHOD(get_reverse_shift);
 		ADD_METHOD(get_reverse_scale);
+		ADD_METHOD(apply_column_mods_to_actor);
+		ADD_METHOD(apply_note_mods_to_actor);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewFieldColumn, ActorFrame);

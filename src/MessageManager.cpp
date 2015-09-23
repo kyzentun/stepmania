@@ -218,7 +218,7 @@ void MessageManager::Unsubscribe( IMessageSubscriber* pSubscriber, MessageID m )
 void MessageManager::Broadcast( Message &msg ) const
 {
 	// GAMESTATE is created before MESSAGEMAN, and has several BroadcastOnChangePtr members, so they all broadcast when they're initialized.
-	if(m_Logging)
+	if(this != nullptr && m_Logging)
 	{
 		LOG->Trace("MESSAGEMAN:Broadcast: %s", msg.GetName().c_str());
 	}

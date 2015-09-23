@@ -56,6 +56,8 @@ struct NewFieldColumn : ActorFrame
 	void update_displayed_time(double beat, double second);
 	double get_curr_beat() { return m_curr_beat; }
 	double get_curr_second() { return m_curr_second; }
+	double get_beat_from_second(double second);
+	double get_second_from_beat(double beat);
 	void set_displayed_beat(double beat);
 	void set_displayed_second(double second);
 	void set_pixels_visible_before(double pix)
@@ -94,6 +96,9 @@ struct NewFieldColumn : ActorFrame
 	void calc_transform(mod_val_inputs& input, transform& trans);
 	void calc_reverse_shift();
 	double apply_reverse_shift(double y_offset);
+	void apply_column_mods_to_actor(Actor* act);
+	void apply_note_mods_to_actor(Actor* act, double beat, double second,
+		double y_offset, bool use_alpha, bool use_glow);
 
 	enum render_step
 	{
@@ -244,18 +249,7 @@ struct NewField : ActorFrame
 	// set_player_number exists only so that the notefield board can have
 	// per-player configuration on gameplay.  Using it for any other purpose
 	// is forbidden.
-	void set_player_number(PlayerNumber pn)
-	{
-		Message msg("PlayerStateSet");
-		msg.SetParam("PlayerNumber", pn);
-		m_board->HandleMessage(msg);
-	}
-	void send_width_to_board()
-	{
-		Message msg("WidthSet");
-		msg.SetParam("Width", get_field_width());
-		m_board->HandleMessage(msg);
-	}
+	void set_player_number(PlayerNumber pn);
 
 	void update_displayed_time(double beat, double second);
 

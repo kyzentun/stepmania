@@ -135,11 +135,15 @@ void ModManager::update(double curr_beat, double curr_second)
 		}
 	}
 	m_prev_curr_second= curr_second;
-	update_splines(curr_beat, curr_second);
+	if(!m_per_frame_update_funcs.empty())
+	{
+		mod_val_inputs input(curr_beat, curr_second);
+		for(auto&& func : m_per_frame_update_funcs)
+		{
+			func->per_frame_update(input);
+		}
+	}
 }
-// ModManager::update_splines has to be defined below all the different
-// ModFunction types so that the compiler can see the full ModFunctionSpline
-// declaration when processing it.
 
 void ModManager::add_mod(ModFunction* func, ModifiableValue* parent)
 {
@@ -187,6 +191,23 @@ void ModManager::remove_all_mods(ModifiableValue* parent)
 	}
 }
 
+void ModManager::add_to_per_frame_update(ModFunction* func)
+{
+	if(func->needs_per_frame_update())
+	{
+		m_per_frame_update_funcs.insert(func);
+	}
+}
+
+void ModManager::remove_from_per_frame_update(ModFunction* func)
+{
+	auto entry= m_per_frame_update_funcs.find(func);
+	if(entry != m_per_frame_update_funcs.end())
+	{
+		m_per_frame_update_funcs.erase(entry);
+	}
+}
+
 void ModManager::dump_list_status()
 {
 	LOG->Trace("ModManager::dump_list_status:");
@@ -220,7 +241,7 @@ void ModManager::insert_into_past(ModFunction* func, ModifiableValue* parent)
 
 void ModManager::insert_into_present(ModFunction* func, ModifiableValue* parent)
 {
-	add_to_splines_if_its_a_spline(func);
+	add_to_per_frame_update(func);
 	parent->add_mod_to_active_list(func);
 	// m_present_funcs is sorted in ascending end second order.  Entries with
 	// the same end second are sorted in ascending start second order.
@@ -254,7 +275,7 @@ void ModManager::insert_into_future(ModFunction* func, ModifiableValue* parent)
 
 void ModManager::remove_from_present(std::list<func_and_parent>::iterator fapi)
 {
-	remove_from_splines_if_its_a_spline(fapi->func);
+	remove_from_per_frame_update(fapi->func);
 	fapi->parent->remove_mod_from_active_list(fapi->func);
 	m_present_funcs.erase(fapi);
 }
@@ -264,10 +285,8 @@ void ModInput::clear()
 	m_type= MIT_Scalar;
 	m_scalar= 0.0;
 	m_offset= 0.0;
-	m_rep_enabled= false;
 	m_rep_begin= 0.0;
 	m_rep_end= 0.0;
-	m_phases_enabled= false;
 	m_phases.clear();
 }
 
@@ -307,7 +326,7 @@ void ModInput::load_rep(lua_State* L, int index)
 {
 	if(lua_istable(L, index))
 	{
-		m_rep_enabled= true;
+		rep_apple= &ModInput::apply_rep;
 		get_numbers(L, index, {&m_rep_begin, &m_rep_end});
 	}
 }
@@ -334,7 +353,7 @@ void ModInput::load_phases(lua_State* L, int index)
 {
 	if(lua_istable(L, index))
 	{
-		m_phases_enabled= true;
+		phase_apple= &ModInput::apply_phase;
 		lua_getfield(L, index, "default");
 		load_def_phase(L, lua_gettop(L));
 		lua_pop(L, 1);
@@ -361,6 +380,7 @@ void ModInput::load_from_lua(lua_State* L, int index)
 	{
 		lua_rawgeti(L, index, 1);
 		m_type= Enum::Check<ModInputType>(L, -1);
+		set_type(m_type);
 		lua_pop(L, 1);
 		// The use of lua_tonumber is deliberate.  If the scalar or offset value
 		// does not exist, lua_tonumber will return 0.
@@ -380,6 +400,7 @@ void ModInput::load_from_lua(lua_State* L, int index)
 		int spline_index= lua_gettop(L);
 		if(lua_istable(L, spline_index))
 		{
+			spline_apple= &ModInput::apply_spline;
 			m_loop_spline= get_optional_bool(L, spline_index, "loop");
 			m_polygonal_spline= get_optional_bool(L, spline_index, "polygonal");
 			size_t num_points= lua_objlen(L, spline_index);
@@ -393,6 +414,52 @@ void ModInput::load_from_lua(lua_State* L, int index)
 			m_spline.solve(m_loop_spline, m_polygonal_spline);
 		}
 		lua_pop(L, 1);
+	}
+}
+
+void ModInput::set_type(ModInputType t)
+{
+	m_type= t;
+	switch(m_type)
+	{
+		case MIT_Scalar:
+			choice= &mod_val_inputs::scalar;
+			break;
+		case MIT_EvalBeat:
+			choice= &mod_val_inputs::eval_beat;
+			break;
+		case MIT_EvalSecond:
+			choice= &mod_val_inputs::eval_second;
+			break;
+		case MIT_MusicBeat:
+			choice= &mod_val_inputs::music_beat;
+			break;
+		case MIT_MusicSecond:
+			choice= &mod_val_inputs::music_second;
+			break;
+		case MIT_DistBeat:
+			choice= &mod_val_inputs::dist_beat;
+			break;
+		case MIT_DistSecond:
+			choice= &mod_val_inputs::dist_second;
+			break;
+		case MIT_YOffset:
+			choice= &mod_val_inputs::y_offset;
+			break;
+		case MIT_StartDistBeat:
+			choice= &mod_val_inputs::start_dist_beat;
+			break;
+		case MIT_StartDistSecond:
+			choice= &mod_val_inputs::start_dist_second;
+			break;
+		case MIT_EndDistBeat:
+			choice= &mod_val_inputs::end_dist_beat;
+			break;
+		case MIT_EndDistSecond:
+			choice= &mod_val_inputs::end_dist_second;
+			break;
+		default:
+			break;
 	}
 }
 
@@ -451,9 +518,205 @@ ModInput::phase const* ModInput::find_phase(double input)
 	return &m_phases[lower];
 }
 
-void ModFunction::load_inputs_from_lua(lua_State* L, int index,
-		std::vector<ModInput*> inputs)
+void ModFunction::update_input_set(mod_val_inputs const& input,
+	vector<size_t>& input_set)
 {
+	const_cast<mod_val_inputs&>(input).set_time(m_start_beat, m_start_second,
+		input.music_beat, input.music_second, m_end_beat, m_end_second);
+	for(auto pindex : input_set)
+	{
+		m_picked_inputs[pindex]= m_inputs[pindex].pick(input);
+	}
+}
+
+void ModFunction::update_input_set_in_spline(mod_val_inputs const& input,
+	vector<size_t>& input_set)
+{
+	const_cast<mod_val_inputs&>(input).set_time(m_start_beat, m_start_second,
+		input.music_beat, input.music_second, m_end_beat, m_end_second);
+	for(auto pindex : input_set)
+	{
+		m_picked_inputs[pindex]= m_inputs[pindex].pick(input);
+		// The first input is the t value.
+		if(pindex > 0)
+		{
+			m_spline.set_point(pindex-1, m_picked_inputs[pindex]);
+		}
+	}
+}
+
+void ModFunction::per_frame_update(mod_val_inputs const& input)
+{
+	if(!m_per_frame_inputs.empty())
+	{
+		(this->*m_pfu)(input);
+	}
+}
+
+void ModFunction::per_frame_update_normal(mod_val_inputs const& input)
+{
+	update_input_set(input, m_per_frame_inputs);
+}
+
+void ModFunction::per_note_update_normal(mod_val_inputs const& input)
+{
+	update_input_set(input, m_per_note_inputs);
+}
+
+void ModFunction::per_frame_update_spline(mod_val_inputs const& input)
+{
+	update_input_set_in_spline(input, m_per_frame_inputs);
+	if(m_per_note_inputs.empty())
+	{
+		m_spline.solve(m_loop_spline, m_polygonal_spline);
+	}
+}
+
+void ModFunction::per_note_update_spline(mod_val_inputs const& input)
+{
+	update_input_set_in_spline(input, m_per_note_inputs);
+	m_spline.solve(m_loop_spline, m_polygonal_spline);
+}
+
+double ModFunction::constant_eval()
+{
+	return m_picked_inputs[0];
+}
+
+double ModFunction::product_eval()
+{
+	return m_picked_inputs[0] * m_picked_inputs[1];
+}
+
+double ModFunction::power_eval()
+{
+	return pow(m_picked_inputs[0], m_picked_inputs[1]);
+}
+
+double ModFunction::log_eval()
+{
+	return log(m_picked_inputs[0]) / log(m_picked_inputs[1]);
+}
+
+#define ZERO_AMP_WAVE_RETURN \
+if(m_picked_inputs[2] == 0.0) \
+{ \
+	return m_picked_inputs[3]; \
+}
+#define WAVE_ANGLE_CALC \
+double angle= fmod(m_picked_inputs[0] + m_picked_inputs[1], M_PI * 2.0); \
+if(angle < 0.0) \
+{ \
+	angle+= M_PI * 2.0; \
+}
+#define WAVE_RET return (wave_res * m_picked_inputs[2]) + m_picked_inputs[3];
+
+double ModFunction::sine_eval()
+{
+	ZERO_AMP_WAVE_RETURN;
+	WAVE_ANGLE_CALC;
+	double const wave_res= RageFastSin(angle);
+	WAVE_RET;
+}
+
+double ModFunction::tan_eval()
+{
+	ZERO_AMP_WAVE_RETURN;
+	WAVE_ANGLE_CALC;
+	double const wave_res= tan(angle);
+	WAVE_RET;
+}
+
+double ModFunction::square_eval()
+{
+	ZERO_AMP_WAVE_RETURN;
+	WAVE_ANGLE_CALC;
+	double const wave_res= (angle >= M_PI ? -1.0 : 1.0);
+	WAVE_RET;
+}
+
+double ModFunction::triangle_eval()
+{
+	ZERO_AMP_WAVE_RETURN;
+	WAVE_ANGLE_CALC;
+	double wave_res= angle * M_1_PI;
+	if(wave_res < .5)
+	{
+		wave_res= wave_res * 2.0;
+	}
+	else if(wave_res < 1.5)
+	{
+		wave_res= 1.0 - ((wave_res - .5) * 2.0);
+	}
+	else
+	{
+		wave_res= -4.0 + (wave_res * 2.0);
+	}
+	WAVE_RET;
+}
+
+#undef WAVE_RET
+#undef WAVE_ANGLE_CALC
+#undef ZERO_AMP_WAVE_RETURN
+
+double ModFunction::spline_eval()
+{
+	return m_spline.evaluate(m_picked_inputs[0], m_loop_spline);
+}
+
+bool ModFunction::load_from_lua(lua_State* L, int index)
+{
+	lua_rawgeti(L, index, 1);
+	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1, true, true);
+	lua_pop(L, 1);
+	if(type == ModFunctionType_Invalid)
+	{
+		return false;
+	}
+	m_type= type;
+	size_t num_inputs= 0;
+	switch(m_type)
+	{
+		case MFT_Constant:
+			m_sub_eval= &ModFunction::constant_eval;
+			num_inputs= 1;
+			break;
+		case MFT_Product:
+			m_sub_eval= &ModFunction::product_eval;
+			num_inputs= 2;
+			break;
+		case MFT_Power:
+			m_sub_eval= &ModFunction::power_eval;
+			num_inputs= 2;
+			break;
+		case MFT_Log:
+			m_sub_eval= &ModFunction::log_eval;
+			num_inputs= 2;
+			break;
+		case MFT_Sine:
+			m_sub_eval= &ModFunction::sine_eval;
+			num_inputs= 4;
+			break;
+		case MFT_Tan:
+			m_sub_eval= &ModFunction::tan_eval;
+			num_inputs= 4;
+			break;
+		case MFT_Square:
+			m_sub_eval= &ModFunction::square_eval;
+			num_inputs= 4;
+			break;
+		case MFT_Triangle:
+			m_sub_eval= &ModFunction::triangle_eval;
+			num_inputs= 4;
+			break;
+		case MFT_Spline:
+			m_sub_eval= &ModFunction::spline_eval;
+			m_pfu= &ModFunction::per_frame_update_spline;
+			m_pnu= &ModFunction::per_note_update_spline;
+			break;
+		default:
+			return false;
+	}
 	// The lua table looks like this:
 	// {
 	//   name= "string",
@@ -480,13 +743,96 @@ void ModFunction::load_inputs_from_lua(lua_State* L, int index,
 	m_start_second= get_optional_double(L, index, "start_second", invalid_modfunction_time);
 	m_end_beat= get_optional_double(L, index, "end_beat", invalid_modfunction_time);
 	m_end_second= get_optional_double(L, index, "end_second", invalid_modfunction_time);
-	size_t elements= lua_objlen(L, index);
-	size_t limit= std::min(elements, inputs.size()+1);
-	for(size_t el= 2; el <= limit; ++el)
+	if(m_type != MFT_Spline)
 	{
-		lua_rawgeti(L, index, el);
-		inputs[el-2]->load_from_lua(L, lua_gettop(L));
+		m_inputs.resize(num_inputs);
+		size_t elements= lua_objlen(L, index);
+		size_t limit= std::min(elements, m_inputs.size()+1);
+		for(size_t el= 2; el <= limit; ++el)
+		{
+			lua_rawgeti(L, index, el);
+			m_inputs[el-2].load_from_lua(L, lua_gettop(L));
+			lua_pop(L, 1);
+		}
+	}
+	else
+	{
+		// The first element of the table is the type.  So the number of points
+		// is one less than the size of the table.
+		size_t num_points= lua_objlen(L, index) - 1;
+		// The t value input is going to be put in the first slot.  So there is
+		// one more input than the number of points.
+		m_inputs.resize(num_points+1);
+		m_spline.resize(num_points);
+		lua_getfield(L, index, "t");
+		m_inputs[0].load_from_lua(L, lua_gettop(L));
 		lua_pop(L, 1);
+		m_loop_spline= get_optional_bool(L, index, "loop");
+		m_polygonal_spline= get_optional_bool(L, index, "polygonal");
+		for(size_t el= 2; el <= num_points+1; ++el)
+		{
+			lua_rawgeti(L, index, el);
+			m_inputs[el-1].load_from_lua(L, lua_gettop(L));
+			lua_pop(L, 1);
+		}
+	}
+	m_picked_inputs.resize(m_inputs.size());
+	mod_val_inputs scalar_input(0.0, 0.0);
+	for(size_t p= 0; p < m_inputs.size(); ++p)
+	{
+		ModInputMetaType mt= m_inputs[p].get_meta_type();
+		switch(mt)
+		{
+			case MIMT_Scalar:
+				m_picked_inputs[p]= m_inputs[p].pick(scalar_input);
+				break;
+			case MIMT_PerFrame:
+				m_per_frame_inputs.push_back(p);
+				break;
+			case MIMT_PerNote:
+				m_per_note_inputs.push_back(p);
+				break;
+		}
+	}
+	if(m_type == MFT_Spline)
+	{
+		// All scalar inputs are sent to the spline on loading.  So the ones that
+		// are not scalars are listed in per_note_inputs and per_frame_inputs so
+		// those stages only send the ones they need to.
+		// If all the input points are scalars, then they only need to be copied
+		// into the spline once, and the spline only has to be solved once ever.
+		// The t value input is in the first slot.  So there is one more input
+		// than the number of points.
+		for(size_t p= 1; p < m_picked_inputs.size(); ++p)
+		{
+			m_spline.set_point(p-1, m_picked_inputs[p]);
+		}
+		if(m_per_frame_inputs.empty() && m_per_note_inputs.empty())
+		{
+			m_spline.solve(m_loop_spline, m_polygonal_spline);
+		}
+	}
+	return true;
+}
+
+void ModFunction::push_inputs(lua_State* L, int table_index)
+{
+	size_t curr_input= 0;
+	int out_index= 1;
+	// For splines, the first input is the t value input.  But the returned
+	// inputs table should look like the table the ModFunction was created
+	// from.  So a spline starts at input 1, and puts the t input in a field.
+	if(m_type == MFT_Spline)
+	{
+		curr_input= 1;
+		m_inputs[0].PushSelf(L);
+		lua_setfield(L, table_index, "t");
+	}
+	for(; curr_input < m_inputs.size(); ++curr_input)
+	{
+		m_inputs[curr_input].PushSelf(L);
+		lua_rawseti(L, table_index, out_index);
+		++out_index;
 	}
 }
 
@@ -510,392 +856,14 @@ void ModFunction::calc_unprovided_times(TimingData const* timing)
 	calc_timing_pair(timing, m_end_beat, m_end_second);
 }
 
-struct ModFunctionConstant : ModFunction
-{
-	ModFunctionConstant(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput value;
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		return value.pick(input, time);
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		load_inputs_from_lua(L, index, {&value});
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		push_inputs_internal(L, table_index, {&value});
-	}
-	virtual size_t num_inputs() { return 1; }
-};
-
-struct ModFunctionProduct : ModFunction
-{
-	ModFunctionProduct(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput value;
-	ModInput mult;
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		return value.pick(input, time) * mult.pick(input, time);
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		load_inputs_from_lua(L, index, {&value, &mult});
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		push_inputs_internal(L, table_index, {&value, &mult});
-	}
-	virtual size_t num_inputs() { return 2; }
-};
-
-struct ModFunctionPower : ModFunction
-{
-	ModFunctionPower(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput value;
-	ModInput mult;
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		return pow(value.pick(input, time), mult.pick(input, time));
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		load_inputs_from_lua(L, index, {&value, &mult});
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		push_inputs_internal(L, table_index, {&value, &mult});
-	}
-	virtual size_t num_inputs() { return 2; }
-};
-
-struct ModFunctionLog : ModFunction
-{
-	ModFunctionLog(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput value;
-	ModInput base;
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		return log(value.pick(input, time)) / log(base.pick(input, time));
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		load_inputs_from_lua(L, index, {&value, &base});
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		push_inputs_internal(L, table_index, {&value, &base});
-	}
-	virtual size_t num_inputs() { return 2; }
-};
-
-struct ModFunctionWave : ModFunction
-{
-	ModFunctionWave(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput angle;
-	ModInput phase;
-	ModInput amplitude;
-	ModInput offset;
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		double amp= amplitude.pick(input, time);
-		if(amp == 0.0)
-		{
-			return offset.pick(input, time);
-		}
-		double angle_res= angle.pick(input, time) + phase.pick(input, time);
-		angle_res= fmod(angle_res, M_PI * 2.0);
-		if(angle_res < 0.0)
-		{
-			angle_res+= M_PI * 2.0;
-		}
-		double const wave_res= eval_wave(angle_res);
-		return (wave_res * amp) + offset.pick(input, time);
-	}
-	virtual double eval_wave(double const angle)
-	{
-		return angle;
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		load_inputs_from_lua(L, index, {&angle, &phase, &amplitude, &offset});
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		push_inputs_internal(L, table_index,
-			{&angle, &phase, &amplitude, &offset});
-	}
-	virtual size_t num_inputs() { return 4; }
-};
-
-struct ModFunctionSine : ModFunctionWave
-{
-	ModFunctionSine(ModifiableValue* parent)
-		:ModFunctionWave(parent)
-	{}
-	virtual double eval_wave(double const angle)
-	{
-		return RageFastSin(angle);
-	}
-};
-
-struct ModFunctionTan : ModFunctionWave
-{
-	ModFunctionTan(ModifiableValue* parent)
-		:ModFunctionWave(parent)
-	{}
-	virtual double eval_wave(double const angle)
-	{
-		return tan(angle);
-	}
-};
-
-struct ModFunctionSquare : ModFunctionWave
-{
-	ModFunctionSquare(ModifiableValue* parent)
-		:ModFunctionWave(parent)
-	{}
-	virtual double eval_wave(double const angle)
-	{
-		return angle >= M_PI ? -1.0 : 1.0;
-	}
-};
-
-struct ModFunctionTriangle : ModFunctionWave
-{
-	ModFunctionTriangle(ModifiableValue* parent)
-		:ModFunctionWave(parent)
-	{}
-	virtual double eval_wave(double const angle)
-	{
-		double ret= angle * M_1_PI;
-		if(ret < .5)
-		{
-			return ret * 2.0;
-		}
-		else if(ret < 1.5)
-		{
-			return 1.0 - ((ret - .5) * 2.0);
-		}
-		return -4.0 + (ret * 2.0);
-	}
-};
-
-struct ModFunctionSpline : ModFunction
-{
-	ModFunctionSpline(ModifiableValue* parent)
-		:ModFunction(parent)
-	{}
-	ModInput t_input;
-	vector<ModInput> points;
-	bool loop;
-	bool polygonal;
-	// Solving the spline for every note is probably expensive.  But it could
-	// allow more flexibility if an input point uses EvalBeat or similar.
-	// It's possible to look at the types of the input points and figure out
-	// whether per-note solving is necessary, but forcing a flag to be set
-	// makes the lua author more aware of the extra processing cost.
-	virtual bool needs_per_frame_solve()
-	{
-		return !per_frame_points.empty();
-	}
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		per_note_solve(input, time);
-		double t= t_input.pick(input, time);
-		return spline.evaluate(t, loop);
-	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		// The first element of the table is the type.  So the number of points
-		// is one less than the size of the table.
-		size_t num_points= lua_objlen(L, index) - 1;
-		points.resize(num_points);
-		vector<ModInput*> point_wrapper;
-		point_wrapper.reserve(num_points);
-		for(auto&& p : points)
-		{
-			point_wrapper.push_back(&p);
-		}
-		load_inputs_from_lua(L, index, point_wrapper);
-		lua_getfield(L, index, "t");
-		t_input.load_from_lua(L, lua_gettop(L));
-		lua_pop(L, 1);
-		loop= get_optional_bool(L, index, "loop");
-		polygonal= get_optional_bool(L, index, "polygonal");
-		// Now that the points are loaded, organize them by type and send all the
-		// scalars to the spline now.
-		spline.resize(points.size());
-		mod_val_inputs scalar_input(0.0, 0.0);
-		mod_time_inputs scalar_time(0.0);
-		for(size_t p= 0; p < points.size(); ++p)
-		{
-			ModInputMetaType mt= points[p].get_meta_type();
-			switch(mt)
-			{
-				case MIMT_Scalar:
-					spline.set_point(p, points[p].pick(scalar_input, scalar_time));
-					break;
-				case MIMT_PerNote:
-					per_note_points.push_back(p);
-					// Per-note points are also put into the per-frame list so that
-					// they will be set for the per-frame solving step.
-				case MIMT_PerFrame:
-					per_frame_points.push_back(p);
-					break;
-			}
-		}
-		if(per_frame_points.empty())
-		{
-			solve();
-		}
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		vector<ModInput*> inputs= {&t_input};
-		inputs.reserve(1 + points.size());
-		for(auto&& p : points)
-		{
-			inputs.push_back(&p);
-		}
-		push_inputs_internal(L, table_index, inputs);
-	}
-	virtual size_t num_inputs() { return 1+points.size(); }
-
-	void solve()
-	{
-		spline.solve(loop, polygonal);
-	}
-	void per_frame_solve(mod_val_inputs const& input)
-	{
-		if(per_frame_points.empty())
-		{
-			return;
-		}
-		mod_time_inputs time(m_start_beat, m_start_second,
-			input.music_beat, input.music_second, m_end_beat, m_end_second);
-		for(auto pindex : per_frame_points)
-		{
-			spline.set_point(pindex, points[pindex].pick(input, time));
-		}
-		solve();
-	}
-	void per_note_solve(mod_val_inputs const& input, mod_time_inputs const& time)
-	{
-		if(per_note_points.empty())
-		{
-			return;
-		}
-		for(auto pindex : per_note_points)
-		{
-			spline.set_point(pindex, points[pindex].pick(input, time));
-		}
-		solve();
-	}
-
-private:
-	CubicSpline spline;
-	// All scalar inputs are sent to the spline on loading.  So the ones that
-	// are not scalars are listed in per_note_points and per_frame_points so
-	// those stages only send the ones they need to.
-	// If all the input points are scalars, then they only need to be copied
-	// into the spline once, and the spline only has to be solved once ever.
-	vector<size_t> per_note_points;
-	vector<size_t> per_frame_points;
-};
-
-// ModManager::update_splines has to be defined below all the different
-// ModFunction types so that the compiler can see the full ModFunctionSpline
-// declaration when processing it.
-void ModManager::update_splines(double curr_beat, double curr_second)
-{
-	if(!m_active_splines.empty())
-	{
-		mod_val_inputs input(curr_beat, curr_second);
-		for(auto&& spline : m_active_splines)
-		{
-			spline->per_frame_solve(input);
-		}
-	}
-}
-
-void ModManager::add_to_splines_if_its_a_spline(ModFunction* func)
-{
-	ModFunctionSpline* spline_func= dynamic_cast<ModFunctionSpline*>(func);
-	if(spline_func != nullptr)
-	{
-		m_active_splines.insert(spline_func);
-	}
-}
-
-void ModManager::remove_from_splines_if_its_a_spline(ModFunction* func)
-{
-	ModFunctionSpline* spline_func= dynamic_cast<ModFunctionSpline*>(func);
-	if(spline_func != nullptr)
-	{
-		auto active_spline_entry= m_active_splines.find(spline_func);
-		if(active_spline_entry != m_active_splines.end())
-		{
-			m_active_splines.erase(active_spline_entry);
-		}
-	}
-}
-
-void ModManager::add_spline(ModFunctionSpline* func)
-{
-	m_active_splines.insert(func);
-}
-
 static ModFunction* create_field_mod(ModifiableValue* parent, lua_State* L, int index)
 {
-	lua_rawgeti(L, index, 1);
-	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1);
-	lua_pop(L, 1);
-	ModFunction* ret= nullptr;
-	switch(type)
+	ModFunction* ret= new ModFunction(parent);
+	if(!ret->load_from_lua(L, index))
 	{
-		case MFT_Constant:
-			ret= new ModFunctionConstant(parent);
-			break;
-		case MFT_Product:
-			ret= new ModFunctionProduct(parent);
-			break;
-		case MFT_Power:
-			ret= new ModFunctionPower(parent);
-			break;
-		case MFT_Log:
-			ret= new ModFunctionLog(parent);
-			break;
-		case MFT_Sine:
-			ret= new ModFunctionSine(parent);
-			break;
-		case MFT_Tan:
-			ret= new ModFunctionTan(parent);
-			break;
-		case MFT_Square:
-			ret= new ModFunctionSquare(parent);
-			break;
-		case MFT_Triangle:
-			ret= new ModFunctionTriangle(parent);
-			break;
-		case MFT_Spline:
-			ret= new ModFunctionSpline(parent);
-			break;
-		default:
-			return nullptr;
+		delete ret;
+		return nullptr;
 	}
-	// FIXME: This leaks memory if there is an error in the lua.
-	ret->load_from_lua(L, index);
 	return ret;
 }
 
@@ -949,14 +917,7 @@ ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 		delete new_mod;
 		ret= mod->second;
 	}
-	if(ret->needs_per_frame_solve())
-	{
-		ModFunctionSpline* spline= dynamic_cast<ModFunctionSpline*>(ret);
-		if(spline != nullptr)
-		{
-			m_manager->add_spline(spline);
-		}
-	}
+	m_manager->add_to_per_frame_update(ret);
 	return ret;
 }
 
@@ -1072,13 +1033,11 @@ struct LunaModInput : Luna<ModInput>
 	}
 	static int set_type(T* p, lua_State* L)
 	{
-		p->m_type= Enum::Check<ModInputType>(L, 1);
+		p->set_type(Enum::Check<ModInputType>(L, 1));
 		COMMON_RETURN_SELF;
 	}
 	GET_SET_FLOAT_METHOD(scalar, m_scalar);
 	GET_SET_FLOAT_METHOD(offset, m_offset);
-	GET_SET_BOOL_METHOD(rep_enabled, m_rep_enabled);
-	GET_SET_BOOL_METHOD(phases_enabled, m_phases_enabled);
 	static int get_rep(T* p, lua_State* L)
 	{
 		push_numbers(L, {&p->m_rep_begin, &p->m_rep_end});
@@ -1159,14 +1118,11 @@ struct LunaModInput : Luna<ModInput>
 	{
 		(void)L;
 		p->m_phases.clear();
-		p->m_phases_enabled= false;
 		COMMON_RETURN_SELF;
 	}
 	LunaModInput()
 	{
 		ADD_GET_SET_METHODS(type);
-		ADD_GET_SET_METHODS(rep_enabled);
-		ADD_GET_SET_METHODS(phases_enabled);
 		ADD_GET_SET_METHODS(scalar);
 		ADD_GET_SET_METHODS(offset);
 		ADD_GET_SET_METHODS(rep);

@@ -94,6 +94,7 @@ struct NewFieldColumn : ActorFrame
 		return fmodf((input.eval_beat * mult) + offset, 1.0);
 	}
 	void calc_transform(mod_val_inputs& input, transform& trans);
+	void hold_render_transform(mod_val_inputs& input, transform& trans, bool do_rot);
 	void calc_reverse_shift();
 	double apply_reverse_shift(double y_offset);
 	void apply_column_mods_to_actor(Actor* act);

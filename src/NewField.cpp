@@ -165,6 +165,11 @@ void NewFieldColumn::calc_transform(mod_val_inputs& input, transform& trans)
 	m_note_mod.evaluate(input, trans);
 }
 
+void NewFieldColumn::hold_render_transform(mod_val_inputs& input, transform& trans, bool do_rot)
+{
+	m_note_mod.hold_render_eval(input, trans, do_rot);
+}
+
 void NewFieldColumn::calc_reverse_shift()
 {
 	mod_val_inputs input(m_curr_beat, m_curr_second);
@@ -488,7 +493,7 @@ struct hold_vert_step_state
 		beat= beat_lerp.lerp(y);
 		second= second_lerp.lerp(y);
 		mod_val_inputs mod_input(beat, second, curr_beat, curr_second, y);
-		col.calc_transform(mod_input, trans);
+		col.hold_render_transform(mod_input, trans, col.m_twirl_holds);
 		alpha= col.m_note_alpha.evaluate(mod_input);
 		glow= col.m_note_glow.evaluate(mod_input);
 		return last_vert_set;
@@ -552,9 +557,14 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	int phase= HTP_Top;
 	hold_vert_step_state next_step; // The OS of the future.
 	next_step.calc(*this, start_y, end_y, beat_lerper, second_lerper, m_curr_beat, m_curr_second, tex_handler, phase);
+	bool need_glow_pass= true;
 	for(double curr_y= start_y; !last_vert_set; curr_y+= y_step)
 	{
 		hold_vert_step_state curr_step= next_step;
+		if(curr_step.glow > .01)
+		{
+			need_glow_pass= true;
+		}
 		last_vert_set= next_step.calc(*this, curr_y + y_step, end_y, beat_lerper, second_lerper, m_curr_beat, m_curr_second, tex_handler, phase);
 		RageVector3 render_forward(0.0, 1.0, 0.0);
 		if(!m_holds_skewed_by_mods)
@@ -646,18 +656,28 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 				DISPLAY->SetBlendMode(t == 0 ? BLEND_NORMAL : BLEND_ADD);
 				verts_to_draw.draw();
 			}
-			verts_to_draw.swap_glow();
-			DISPLAY->SetTextureMode(TextureUnit_1, TextureMode_Glow);
-			for(size_t t= 0; t < data.parts.size(); ++t)
+			if(need_glow_pass)
 			{
-				DISPLAY->SetTexture(TextureUnit_1, data.parts[t]->GetTexHandle());
-				DISPLAY->SetBlendMode(t == 0 ? BLEND_NORMAL : BLEND_ADD);
-				verts_to_draw.draw();
+				verts_to_draw.swap_glow();
+				DISPLAY->SetTextureMode(TextureUnit_1, TextureMode_Glow);
+				for(size_t t= 0; t < data.parts.size(); ++t)
+				{
+					DISPLAY->SetTexture(TextureUnit_1, data.parts[t]->GetTexHandle());
+					DISPLAY->SetBlendMode(t == 0 ? BLEND_NORMAL : BLEND_ADD);
+					verts_to_draw.draw();
+				}
 			}
-			// Intentionally swap the glow back after calling rollback so that only
-			// the set of verts that will remain are swapped.
-			verts_to_draw.rollback();
-			verts_to_draw.swap_glow();
+			if(!last_vert_set)
+			{
+				// Intentionally swap the glow back after calling rollback so that
+				// only the set of verts that will remain are swapped.
+				verts_to_draw.rollback();
+				if(need_glow_pass)
+				{
+					verts_to_draw.swap_glow();
+				}
+				need_glow_pass= true;
+			}
 		}
 	}
 }

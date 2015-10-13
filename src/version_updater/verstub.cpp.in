@@ -12,4 +12,4 @@ extern char const * const product_version = smVersionFull;
 extern char const * const product_version = smVersionTraditional;
 #endif
 
-extern int const version_num = 0; // will change
+extern unsigned long const version_num = 0; // will change

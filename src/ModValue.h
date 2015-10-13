@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "CubicSpline.h"
+#include "RageTimer.h"
 #include "RageTypes.h"
 #include "TimingData.h"
 
@@ -19,11 +20,6 @@ struct ModifiableValue;
 // invalid_modfunction_time exists so that the loading code can tell when a
 // start or end time was provided.
 static const double invalid_modfunction_time= -1000.0;
-
-// The forward declaration for ModFunctionSpline exists because ModManager
-// takes care of updating splines that need to be solved every frame.  No
-// other part of the engine should care about them.
-struct ModFunctionSpline;
 
 struct ModManager
 {
@@ -41,16 +37,14 @@ struct ModManager
 		:m_prev_curr_second(invalid_modfunction_time)
 	{}
 	void update(double curr_beat, double curr_second);
-	void update_splines(double curr_beat, double curr_second);
 	void add_mod(ModFunction* func, ModifiableValue* parent);
 	void remove_mod(ModFunction* func);
 	void remove_all_mods(ModifiableValue* parent);
 
 	void dump_list_status();
 
-	void add_to_splines_if_its_a_spline(ModFunction* func);
-	void remove_from_splines_if_its_a_spline(ModFunction* func);
-	void add_spline(ModFunctionSpline* func);
+	void add_to_per_frame_update(ModFunction* func);
+	void remove_from_per_frame_update(ModFunction* func);
 
 private:
 	void insert_into_past(ModFunction* func, ModifiableValue* parent);
@@ -70,49 +64,46 @@ private:
 	std::list<func_and_parent> m_present_funcs;
 	std::list<func_and_parent> m_future_funcs;
 
-	std::unordered_set<ModFunctionSpline*> m_active_splines;
+	std::unordered_set<ModFunction*> m_per_frame_update_funcs;
 };
 
 struct mod_val_inputs
 {
-	double const eval_beat;
-	double const eval_second;
-	double const music_beat;
-	double const music_second;
-	double const y_offset;
+	double scalar;
+	double eval_beat;
+	double eval_second;
+	double music_beat;
+	double music_second;
+	double dist_beat;
+	double dist_second;
+	double y_offset;
+	double start_dist_beat;
+	double start_dist_second;
+	double end_dist_beat;
+	double end_dist_second;
 	mod_val_inputs(double const mb, double const ms)
-		:eval_beat(mb), eval_second(ms), music_beat(mb), music_second(ms), y_offset(0.0)
+		:scalar(1.0), eval_beat(mb), eval_second(ms), music_beat(mb),
+		music_second(ms), dist_beat(0.0), dist_second(0.0), y_offset(0.0)
 	{}
 	mod_val_inputs(double const eb, double const es, double const mb, double const ms)
-		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms), y_offset(0.0)
+		:scalar(1.0), eval_beat(eb), eval_second(es), music_beat(mb),
+		music_second(ms), dist_beat(eb-mb), dist_second(es-ms), y_offset(0.0)
 	{}
 	mod_val_inputs(double const eb, double const es, double const mb, double const ms, double const yoff)
-		:eval_beat(eb), eval_second(es), music_beat(mb), music_second(ms), y_offset(yoff)
-	{}
-};
-
-struct mod_time_inputs
-{
-	double const start_dist_beat;
-	double const start_dist_second;
-	double const end_dist_beat;
-	double const end_dist_second;
-	// Use this constructor to set all to zero.
-	mod_time_inputs(double zero)
-		:start_dist_beat(zero), start_dist_second(zero),
-		end_dist_beat(zero), end_dist_second(zero)
+		:scalar(1.0), eval_beat(eb), eval_second(es), music_beat(mb),
+		music_second(ms), dist_beat(eb-mb), dist_second(es-ms), y_offset(yoff)
 	{}
 #define PART_DIFF(result, after, before, type) \
-		result##_dist_##type(after##_##type - before##_##type)
+	result##_dist_##type= after##_##type - before##_##type;
 #define BS_DIFF(result, after, before) \
-		PART_DIFF(result, after, before, beat), \
-		PART_DIFF(result, after, before, second)
-	mod_time_inputs(double start_beat, double start_second, double curr_beat,
+	PART_DIFF(result, after, before, beat); \
+	PART_DIFF(result, after, before, second);
+	void set_time(double start_beat, double start_second, double curr_beat,
 		double curr_second, double end_beat, double end_second)
-		: BS_DIFF(start, curr, start), BS_DIFF(end, end, curr)
-	{}
-#undef BS_DIFF
-#undef PART_DIFF
+	{
+		BS_DIFF(start, curr, start);
+		BS_DIFF(end, end, curr);
+	}
 };
 
 enum ModInputType
@@ -125,6 +116,7 @@ enum ModInputType
 	MIT_DistBeat,
 	MIT_DistSecond,
 	MIT_YOffset,
+	// TODO:  Split Start/End dist types into Music and Eval subtypes.
 	MIT_StartDistBeat,
 	MIT_StartDistSecond,
 	MIT_EndDistBeat,
@@ -165,7 +157,6 @@ struct ModInput
 	//     input is 2, result is 1.
 	//     input is .25, result is 1.25.
 	//     input is -.25, result is 1.75.
-	bool m_rep_enabled;
 	double m_rep_begin;
 	double m_rep_end;
 	// The phase modifier applies a multiplier and an offset in its range.
@@ -186,7 +177,6 @@ struct ModInput
 	//     input is .5, result is .5 (.5 - .5 is 0, 0 * 2 is 0, 0 + .5 is .5)
 	//     input is .6, result is .7 (.6 - .5 is .1, .1 * 2 is .2, .2 + .5 is .7)
 	//     input is 1, result is 1 (outside the phase).
-	bool m_phases_enabled;
 	struct phase
 	{
 		phase()
@@ -205,10 +195,17 @@ struct ModInput
 	bool m_loop_spline;
 	bool m_polygonal_spline;
 
+	double (ModInput::* rep_apple)(double);
+	double (ModInput::* phase_apple)(double);
+	double (ModInput::* spline_apple)(double);
+	double mod_val_inputs::* choice;
+
 	ModInput()
 		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0),
-		m_rep_enabled(false), m_rep_begin(0.0), m_rep_end(0.0),
-		m_phases_enabled(false), m_loop_spline(false), m_polygonal_spline(false)
+		m_rep_begin(0.0), m_rep_end(0.0),
+		m_loop_spline(false), m_polygonal_spline(false),
+		rep_apple(nullptr), phase_apple(nullptr), spline_apple(nullptr),
+		choice(&mod_val_inputs::scalar)
 	{}
 	ModInputMetaType get_meta_type()
 	{
@@ -242,13 +239,10 @@ struct ModInput
 	void load_def_phase(lua_State* L, int index);
 	void load_phases(lua_State* L, int index);
 	void load_from_lua(lua_State* L, int index);
+	void set_type(ModInputType t);
 	phase const* find_phase(double input);
 	double apply_rep(double input)
 	{
-		if(!m_rep_enabled)
-		{
-			return input;
-		}
 		double const dist= m_rep_end - m_rep_begin;
 		double const mod_res= fmod(input, dist);
 		if(mod_res < 0.0)
@@ -259,10 +253,6 @@ struct ModInput
 	}
 	double apply_phase(double input)
 	{
-		if(!m_phases_enabled)
-		{
-			return input;
-		}
 		phase const* curr= find_phase(input);
 		return ((input - curr->start) * curr->mult) + curr->offset;
 	}
@@ -274,52 +264,26 @@ struct ModInput
 		}
 		return m_spline.evaluate(input, m_loop_spline);
 	}
-	double pick(mod_val_inputs const& input, mod_time_inputs const& time)
+	double apply_nothing(double input)
 	{
-		double ret= 1.0;
-		switch(m_type)
+		return input;
+	}
+	double pick(mod_val_inputs const& input)
+	{
+		double ret= input.*choice;
+		if(rep_apple != nullptr)
 		{
-			case MIT_Scalar:
-				ret= 1.0;
-				break;
-			case MIT_EvalBeat:
-				ret= input.eval_beat;
-				break;
-			case MIT_EvalSecond:
-				ret= input.eval_second;
-				break;
-			case MIT_MusicBeat:
-				ret= input.music_beat;
-				break;
-			case MIT_MusicSecond:
-				ret= input.music_second;
-				break;
-			case MIT_DistBeat:
-				ret= input.eval_beat - input.music_beat;
-				break;
-			case MIT_DistSecond:
-				ret= input.eval_second - input.music_second;
-				break;
-			case MIT_YOffset:
-				ret= input.y_offset;
-				break;
-			case MIT_StartDistBeat:
-				ret= time.start_dist_beat;
-				break;
-			case MIT_StartDistSecond:
-				ret= time.start_dist_second;
-				break;
-			case MIT_EndDistBeat:
-				ret= time.end_dist_beat;
-				break;
-			case MIT_EndDistSecond:
-				ret= time.end_dist_second;
-				break;
-			default:
-				break;
+			ret= (this->*rep_apple)(ret);
 		}
-		ret= apply_phase(apply_rep(ret));
-		ret= apply_spline(ret * m_scalar);
+		if(phase_apple != nullptr)
+		{
+			ret= (this->*phase_apple)(ret);
+		}
+		ret*= m_scalar;
+		if(spline_apple != nullptr)
+		{
+			ret= (this->*spline_apple)(ret);
+		}
 		return ret + m_offset;
 	}
 	virtual void PushSelf(lua_State* L);
@@ -349,66 +313,86 @@ struct ModFunction
 		m_start_second(invalid_modfunction_time),
 		m_end_beat(invalid_modfunction_time),
 		m_end_second(invalid_modfunction_time),
+		m_sub_eval(&ModFunction::noop_eval),
+		m_pfu(&ModFunction::per_frame_update_normal),
+		m_pnu(&ModFunction::per_note_update_normal),
 		m_parent(parent)
 	{}
-	virtual ~ModFunction() {}
+	~ModFunction() {}
 
 	void calc_unprovided_times(TimingData const* timing);
 
 	std::string const& get_name() { return m_name; }
-	// needs_per_frame_solve exists so that ModifiableValue can check after
+	// needs_per_frame_update exists so that ModifiableValue can check after
 	// creating a ModFunction to see if it needs to be added to the manager for
 	// solving every frame.
-	virtual bool needs_per_frame_solve() { return false; }
+	bool needs_per_frame_update() { return !m_per_frame_inputs.empty(); }
+	void per_frame_update(mod_val_inputs const& input);
 
-	virtual void update(double delta) { UNUSED(delta); }
 	double evaluate(mod_val_inputs const& input)
 	{
-		return sub_evaluate(input, mod_time_inputs(0.0));
+		if(!m_per_note_inputs.empty())
+		{
+			(this->*m_pnu)(input);
+		}
+		return (this->*m_sub_eval)();
 	}
 	double evaluate_with_time(mod_val_inputs const& input)
 	{
-		return sub_evaluate(input, mod_time_inputs(m_start_beat, m_start_second,
-				input.music_beat, input.music_second, m_end_beat, m_end_second));
+		if(!m_per_note_inputs.empty())
+		{
+			const_cast<mod_val_inputs&>(input).set_time(m_start_beat,
+				m_start_second, input.music_beat, input.music_second, m_end_beat,
+				m_end_second);
+			(this->*m_pnu)(input);
+		}
+		return (this->*m_sub_eval)();
 	}
-	virtual double sub_evaluate(mod_val_inputs const& input, mod_time_inputs const& time)
+	double noop_eval()
 	{
-		UNUSED(input);
-		UNUSED(time);
 		return 0.0;
 	}
-	virtual void load_from_lua(lua_State* L, int index)
-	{
-		UNUSED(L);
-		UNUSED(index);
-	}
-	virtual void push_inputs(lua_State* L, int table_index)
-	{
-		UNUSED(L);
-		UNUSED(table_index);
-	}
-	virtual size_t num_inputs() { return 0; }
-	virtual void PushSelf(lua_State* L);
+	double constant_eval();
+	double product_eval();
+	double power_eval();
+	double log_eval();
+	double sine_eval();
+	double tan_eval();
+	double square_eval();
+	double triangle_eval();
+	double spline_eval();
+	bool load_from_lua(lua_State* L, int index);
+	void push_inputs(lua_State* L, int table_index);
+	size_t num_inputs() { return m_inputs.size(); }
+	void PushSelf(lua_State* L);
 
 	double m_start_beat;
 	double m_start_second;
 	double m_end_beat;
 	double m_end_second;
 
-protected:
-	void push_inputs_internal(lua_State* L, int table_index,
-		std::vector<ModInput*> inputs)
-	{
-		size_t i= 1;
-		for(auto&& input : inputs)
-		{
-			input->PushSelf(L);
-			lua_rawseti(L, table_index, i);
-			++i;
-		}
-	}
-	void load_inputs_from_lua(lua_State* L, int index,
-		std::vector<ModInput*> inputs);
+private:
+	void update_input_set(mod_val_inputs const& input,
+		vector<size_t>& input_set);
+	void update_input_set_in_spline(mod_val_inputs const& input,
+		vector<size_t>& input_set);
+	void per_frame_update_normal(mod_val_inputs const& input);
+	void per_note_update_normal(mod_val_inputs const& input);
+	void per_frame_update_spline(mod_val_inputs const& input);
+	void per_note_update_spline(mod_val_inputs const& input);
+
+	ModFunctionType m_type;
+	vector<ModInput> m_inputs;
+	vector<size_t> m_per_note_inputs;
+	vector<size_t> m_per_frame_inputs;
+	vector<double> m_picked_inputs;
+	double (ModFunction::* m_sub_eval)();
+	void (ModFunction::* m_pfu)(mod_val_inputs const& input);
+	void (ModFunction::* m_pnu)(mod_val_inputs const& input);
+
+	CubicSpline m_spline;
+	bool m_loop_spline;
+	bool m_polygonal_spline;
 
 	std::string m_name;
 	ModifiableValue* m_parent;
@@ -488,6 +472,15 @@ struct ModifiableTransform
 		pos_mod.evaluate(input, out.pos);
 		rot_mod.evaluate(input, out.rot);
 		zoom_mod.evaluate(input, out.zoom);
+	}
+	void hold_render_eval(mod_val_inputs const& input, transform& out, bool do_rot)
+	{
+		pos_mod.evaluate(input, out.pos);
+		if(do_rot)
+		{
+			out.rot.y= rot_mod.y_mod.evaluate(input);
+		}
+		out.zoom.x= zoom_mod.x_mod.evaluate(input);
 	}
 	ModifiableVector3 pos_mod;
 	ModifiableVector3 rot_mod;

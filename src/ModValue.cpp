@@ -353,7 +353,7 @@ void ModInput::load_phases(lua_State* L, int index)
 {
 	if(lua_istable(L, index))
 	{
-		phase_apple= &ModInput::apply_phase;
+		enable_phases();
 		lua_getfield(L, index, "default");
 		load_def_phase(L, lua_gettop(L));
 		lua_pop(L, 1);
@@ -368,19 +368,38 @@ void ModInput::load_phases(lua_State* L, int index)
 	}
 }
 
-void ModInput::load_from_lua(lua_State* L, int index)
+void ModInput::load_spline(lua_State* L, int index)
 {
+	if(lua_istable(L, index))
+	{
+		enable_spline();
+		m_loop_spline= get_optional_bool(L, index, "loop");
+		m_polygonal_spline= get_optional_bool(L, index, "polygonal");
+		size_t num_points= lua_objlen(L, index);
+		m_spline.resize(num_points);
+		for(size_t p= 0; p < num_points; ++p)
+		{
+			lua_rawgeti(L, index, p+1);
+			m_spline.set_point(p, lua_tonumber(L, -1));
+			lua_pop(L, 1);
+		}
+		m_spline.solve(m_loop_spline, m_polygonal_spline);
+	}
+}
+
+void ModInput::load_from_lua(lua_State* L, int index, ModFunction* parent)
+{
+	m_parent= parent;
 	if(lua_isnumber(L, index))
 	{
-		m_type= MIT_Scalar;
+		set_type(MIT_Scalar);
 		m_scalar= lua_tonumber(L, index);
 		return;
 	}
 	if(lua_istable(L, index))
 	{
 		lua_rawgeti(L, index, 1);
-		m_type= Enum::Check<ModInputType>(L, -1);
-		set_type(m_type);
+		set_type(Enum::Check<ModInputType>(L, -1));
 		lua_pop(L, 1);
 		// The use of lua_tonumber is deliberate.  If the scalar or offset value
 		// does not exist, lua_tonumber will return 0.
@@ -397,28 +416,14 @@ void ModInput::load_from_lua(lua_State* L, int index)
 		load_phases(L, lua_gettop(L));
 		lua_pop(L, 1);
 		lua_getfield(L, index, "spline");
-		int spline_index= lua_gettop(L);
-		if(lua_istable(L, spline_index))
-		{
-			spline_apple= &ModInput::apply_spline;
-			m_loop_spline= get_optional_bool(L, spline_index, "loop");
-			m_polygonal_spline= get_optional_bool(L, spline_index, "polygonal");
-			size_t num_points= lua_objlen(L, spline_index);
-			m_spline.resize(num_points);
-			for(size_t p= 0; p < num_points; ++p)
-			{
-				lua_rawgeti(L, spline_index, p+1);
-				m_spline.set_point(p, lua_tonumber(L, -1));
-				lua_pop(L, 1);
-			}
-			m_spline.solve(m_loop_spline, m_polygonal_spline);
-		}
+		load_spline(L, lua_gettop(L));
 		lua_pop(L, 1);
 	}
 }
 
 void ModInput::set_type(ModInputType t)
 {
+	ModInputMetaType old_meta_type= get_meta_type();
 	m_type= t;
 	switch(m_type)
 	{
@@ -460,6 +465,11 @@ void ModInput::set_type(ModInputType t)
 			break;
 		default:
 			break;
+	}
+	ModInputMetaType new_meta_type= get_meta_type();
+	if(m_parent != nullptr && old_meta_type != new_meta_type)
+	{
+		m_parent->recategorize(this, old_meta_type, new_meta_type);
 	}
 }
 
@@ -518,6 +528,155 @@ ModInput::phase const* ModInput::find_phase(double input)
 	return &m_phases[lower];
 }
 
+void ModInput::send_repick()
+{
+	if(get_meta_type() == MIMT_Scalar && m_parent != nullptr)
+	{
+		m_parent->repick(this);
+	}
+}
+
+void ModInput::send_spline_repick()
+{
+	m_spline.solve(m_loop_spline, m_polygonal_spline);
+	send_repick();
+}
+
+void ModInput::set_scalar(double s)
+{
+	m_scalar= s;
+	send_repick();
+}
+
+void ModInput::set_offset(double s)
+{
+	m_offset= s;
+	send_repick();
+}
+
+void ModInput::push_rep(lua_State* L)
+{
+	push_numbers(L, {&m_rep_begin, &m_rep_end});
+}
+
+void ModInput::push_all_phases(lua_State* L)
+{
+	lua_createtable(L, m_phases.size(), 0);
+	for(size_t i= 0; i < m_phases.size(); ++i)
+	{
+		push_phase(L, i);
+		lua_rawseti(L, -2, i+1);
+	}
+}
+
+void ModInput::enable_phases()
+{
+	phase_apple= &ModInput::apply_phase;
+	send_repick();
+}
+
+void ModInput::disable_phases()
+{
+	phase_apple= nullptr;
+	send_repick();
+}
+
+void ModInput::check_disable_phases()
+{
+	if(m_phases.empty() && m_default_phase.mult == 1.0 && m_default_phase.offset == 0.0)
+	{
+		disable_phases();
+	}
+}
+
+void ModInput::remove_phase(size_t phase)
+{
+	if(phase < m_phases.size())
+	{
+		m_phases.erase(m_phases.begin() + phase);
+	}
+	check_disable_phases();
+	send_repick();
+}
+
+void ModInput::clear_phases()
+{
+	m_phases.clear();
+	check_disable_phases();
+	send_repick();
+}
+
+void ModInput::enable_spline()
+{
+	spline_apple= &ModInput::apply_spline;
+	send_repick();
+}
+
+void ModInput::disable_spline()
+{
+	spline_apple= nullptr;
+	send_repick();
+}
+
+void ModInput::set_spline_loop(bool b)
+{
+	m_loop_spline= b;
+	send_spline_repick();
+}
+
+void ModInput::set_spline_polygonal(bool b)
+{
+	m_polygonal_spline= b;
+	m_spline.solve(m_loop_spline, m_polygonal_spline);
+	send_spline_repick();
+}
+
+double ModInput::get_spline_point(size_t p)
+{
+	float as_t= static_cast<float>(p);
+	return m_spline.evaluate(as_t, m_loop_spline);
+}
+
+void ModInput::set_spline_point(size_t p, double value)
+{
+	if(p < m_spline.size())
+	{
+		m_spline.set_point(p, value);
+		m_spline.solve(m_loop_spline, m_polygonal_spline);
+		send_spline_repick();
+	}
+}
+
+void ModInput::add_spline_point(double value)
+{
+	m_spline.resize(m_spline.size()+1);
+	m_spline.set_point(m_spline.size()-1, value);
+	m_spline.solve(m_loop_spline, m_polygonal_spline);
+	send_spline_repick();
+}
+
+void ModInput::remove_spline_point(size_t p)
+{
+	p= std::min(p, m_spline.size());
+	m_spline.remove_point(p);
+	m_spline.solve(m_loop_spline, m_polygonal_spline);
+	send_spline_repick();
+}
+
+void ModInput::push_spline(lua_State* L)
+{
+	lua_createtable(L, m_spline.size(), 2);
+	lua_pushboolean(L, m_loop_spline);
+	lua_setfield(L, -2, "loop");
+	lua_pushboolean(L, m_polygonal_spline);
+	lua_setfield(L, -2, "polygonal");
+	for(size_t p= 0; p < m_spline.size(); ++p)
+	{
+		lua_pushnumber(L, get_spline_point(p));
+		lua_rawseti(L, -2, p+1);
+	}
+}
+
 void ModFunction::update_input_set(mod_val_inputs const& input,
 	vector<size_t>& input_set)
 {
@@ -542,6 +701,76 @@ void ModFunction::update_input_set_in_spline(mod_val_inputs const& input,
 		{
 			m_spline.set_point(pindex-1, m_picked_inputs[pindex]);
 		}
+	}
+}
+
+size_t ModFunction::find_child(ModInput* child)
+{
+	for(size_t p= 0; p < m_inputs.size(); ++p)
+	{
+		if(child == &(m_inputs[p]))
+		{
+			return p;
+		}
+	}
+	return m_inputs.size();
+}
+
+void ModFunction::remove_child_from_percoset(size_t child_index,
+	vector<size_t>& percoset)
+{
+	for(auto pill= percoset.begin(); pill != percoset.end(); ++pill)
+	{
+		if(*pill == child_index)
+		{
+			percoset.erase(pill);
+			return;
+		}
+	}
+}
+
+void ModFunction::recategorize(ModInput* child, ModInputMetaType old_meta,
+	ModInputMetaType new_meta)
+{
+	if(m_being_loaded)
+	{
+		return;
+	}
+	size_t index= find_child(child);
+	if(index >= m_inputs.size())
+	{
+		return;
+	}
+	if(old_meta == MIMT_PerFrame)
+	{
+		remove_child_from_percoset(index, m_per_frame_inputs);
+	}
+	else if(old_meta == MIMT_PerNote)
+	{
+		remove_child_from_percoset(index, m_per_note_inputs);
+	}
+	if(new_meta == MIMT_PerFrame)
+	{
+		m_per_frame_inputs.push_back(index);
+	}
+	else if(new_meta == MIMT_PerNote)
+	{
+		m_per_note_inputs.push_back(index);
+	}
+	else
+	{
+		mod_val_inputs scalar_input(0.0, 0.0);
+		m_picked_inputs[index]= child->pick(scalar_input);
+	}
+}
+
+void ModFunction::repick(ModInput* child)
+{
+	size_t index= find_child(child);
+	if(index < m_inputs.size())
+	{
+		mod_val_inputs scalar_input(0.0, 0.0);
+		m_picked_inputs[index]= m_inputs[index].pick(scalar_input);
 	}
 }
 
@@ -664,15 +893,8 @@ double ModFunction::spline_eval()
 	return m_spline.evaluate(m_picked_inputs[0], m_loop_spline);
 }
 
-bool ModFunction::load_from_lua(lua_State* L, int index)
+void ModFunction::set_type(ModFunctionType type)
 {
-	lua_rawgeti(L, index, 1);
-	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1, true, true);
-	lua_pop(L, 1);
-	if(type == ModFunctionType_Invalid)
-	{
-		return false;
-	}
 	m_type= type;
 	size_t num_inputs= 0;
 	switch(m_type)
@@ -715,8 +937,26 @@ bool ModFunction::load_from_lua(lua_State* L, int index)
 			m_pnu= &ModFunction::per_note_update_spline;
 			break;
 		default:
-			return false;
+			return;
 	}
+	if(m_type != MFT_Spline)
+	{
+		m_inputs.resize(num_inputs);
+	}
+}
+
+bool ModFunction::load_from_lua(lua_State* L, int index)
+{
+	m_being_loaded= true;
+	lua_rawgeti(L, index, 1);
+	ModFunctionType type= Enum::Check<ModFunctionType>(L, -1, true, true);
+	lua_pop(L, 1);
+	if(type == ModFunctionType_Invalid)
+	{
+		m_being_loaded= false;
+		return false;
+	}
+	set_type(type);
 	// The lua table looks like this:
 	// {
 	//   name= "string",
@@ -745,13 +985,12 @@ bool ModFunction::load_from_lua(lua_State* L, int index)
 	m_end_second= get_optional_double(L, index, "end_second", invalid_modfunction_time);
 	if(m_type != MFT_Spline)
 	{
-		m_inputs.resize(num_inputs);
 		size_t elements= lua_objlen(L, index);
 		size_t limit= std::min(elements, m_inputs.size()+1);
 		for(size_t el= 2; el <= limit; ++el)
 		{
 			lua_rawgeti(L, index, el);
-			m_inputs[el-2].load_from_lua(L, lua_gettop(L));
+			m_inputs[el-2].load_from_lua(L, lua_gettop(L), this);
 			lua_pop(L, 1);
 		}
 	}
@@ -765,14 +1004,14 @@ bool ModFunction::load_from_lua(lua_State* L, int index)
 		m_inputs.resize(num_points+1);
 		m_spline.resize(num_points);
 		lua_getfield(L, index, "t");
-		m_inputs[0].load_from_lua(L, lua_gettop(L));
+		m_inputs[0].load_from_lua(L, lua_gettop(L), this);
 		lua_pop(L, 1);
 		m_loop_spline= get_optional_bool(L, index, "loop");
 		m_polygonal_spline= get_optional_bool(L, index, "polygonal");
 		for(size_t el= 2; el <= num_points+1; ++el)
 		{
 			lua_rawgeti(L, index, el);
-			m_inputs[el-1].load_from_lua(L, lua_gettop(L));
+			m_inputs[el-1].load_from_lua(L, lua_gettop(L), this);
 			lua_pop(L, 1);
 		}
 	}
@@ -791,6 +1030,8 @@ bool ModFunction::load_from_lua(lua_State* L, int index)
 				break;
 			case MIMT_PerNote:
 				m_per_note_inputs.push_back(p);
+				break;
+			default:
 				break;
 		}
 	}
@@ -812,6 +1053,7 @@ bool ModFunction::load_from_lua(lua_State* L, int index)
 			m_spline.solve(m_loop_spline, m_polygonal_spline);
 		}
 	}
+	m_being_loaded= false;
 	return true;
 }
 
@@ -876,13 +1118,19 @@ ModifiableValue::~ModifiableValue()
 double ModifiableValue::evaluate(mod_val_inputs const& input)
 {
 	double sum= m_value;
-	for(auto&& mod : m_mods)
+	if(!m_mods.empty())
 	{
-		sum+= mod.second->evaluate(input);
+		for(auto&& mod : m_mods)
+		{
+			sum+= mod.second->evaluate(input);
+		}
 	}
-	for(auto&& mod : m_active_managed_mods)
+	if(!m_active_managed_mods.empty())
 	{
-		sum+= mod->evaluate_with_time(input);
+		for(auto&& mod : m_active_managed_mods)
+		{
+			sum+= mod->evaluate_with_time(input);
+		}
 	}
 	return sum;
 }
@@ -1028,7 +1276,7 @@ struct LunaModInput : Luna<ModInput>
 {
 	static int get_type(T* p, lua_State* L)
 	{
-		Enum::Push(L, p->m_type);
+		Enum::Push(L, p->get_type());
 		return 1;
 	}
 	static int set_type(T* p, lua_State* L)
@@ -1036,11 +1284,11 @@ struct LunaModInput : Luna<ModInput>
 		p->set_type(Enum::Check<ModInputType>(L, 1));
 		COMMON_RETURN_SELF;
 	}
-	GET_SET_FLOAT_METHOD(scalar, m_scalar);
-	GET_SET_FLOAT_METHOD(offset, m_offset);
+	GETTER_SETTER_FLOAT_METHOD(scalar);
+	GETTER_SETTER_FLOAT_METHOD(offset);
 	static int get_rep(T* p, lua_State* L)
 	{
-		push_numbers(L, {&p->m_rep_begin, &p->m_rep_end});
+		p->push_rep(L);
 		return 1;
 	}
 	static int set_rep(T* p, lua_State* L)
@@ -1054,18 +1302,13 @@ struct LunaModInput : Luna<ModInput>
 	}
 	static int get_all_phases(T* p, lua_State* L)
 	{
-		lua_createtable(L, p->m_phases.size(), 0);
-		for(size_t i= 0; i < p->m_phases.size(); ++i)
-		{
-			p->push_phase(L, i);
-			lua_rawseti(L, -2, i+1);
-		}
+		p->push_all_phases(L);
 		return 1;
 	}
 	static int get_phase(T* p, lua_State* L)
 	{
 		size_t phase= static_cast<size_t>(IArg(1)) - 1;
-		if(phase >= p->m_phases.size())
+		if(phase >= p->get_num_phases())
 		{
 			lua_pushnil(L);
 		}
@@ -1082,7 +1325,7 @@ struct LunaModInput : Luna<ModInput>
 	}
 	static int get_num_phases(T* p, lua_State* L)
 	{
-		lua_pushnumber(L, p->m_phases.size());
+		lua_pushnumber(L, p->get_num_phases());
 		return 1;
 	}
 	static int set_all_phases(T* p, lua_State* L)
@@ -1093,7 +1336,7 @@ struct LunaModInput : Luna<ModInput>
 	static int set_phase(T* p, lua_State* L)
 	{
 		size_t phase= static_cast<size_t>(IArg(1)) - 1;
-		if(phase >= p->m_phases.size() || !lua_istable(L, 2))
+		if(phase >= p->get_num_phases() || !lua_istable(L, 2))
 		{
 			luaL_error(L, "Args to ModInput:set_phase must be an index and a table.");
 		}
@@ -1108,16 +1351,115 @@ struct LunaModInput : Luna<ModInput>
 	static int remove_phase(T* p, lua_State* L)
 	{
 		size_t phase= static_cast<size_t>(IArg(1)) - 1;
-		if(phase < p->m_phases.size())
-		{
-			p->m_phases.erase(p->m_phases.begin() + phase);
-		}
+		p->remove_phase(phase);
 		COMMON_RETURN_SELF;
 	}
 	static int clear_phases(T* p, lua_State* L)
 	{
 		(void)L;
-		p->m_phases.clear();
+		p->clear_phases();
+		COMMON_RETURN_SELF;
+	}
+	static int set_enable_phases(T* p, lua_State* L)
+	{
+		bool enable= BArg(1);
+		if(enable)
+		{
+			p->enable_phases();
+		}
+		else
+		{
+			p->disable_phases();
+		}
+		COMMON_RETURN_SELF;
+	}
+	static int get_enable_phases(T* p, lua_State* L)
+	{
+		lua_pushboolean(L, p->get_enable_phases());
+		return 1;
+	}
+	static int get_enable_spline(T* p, lua_State* L)
+	{
+		lua_pushboolean(L, p->get_enable_spline());
+		return 1;
+	}
+	static int set_enable_spline(T* p, lua_State* L)
+	{
+		bool enable= BArg(1);
+		if(enable)
+		{
+			p->enable_spline();
+		}
+		else
+		{
+			p->disable_spline();
+		}
+		COMMON_RETURN_SELF;
+	}
+	GETTER_SETTER_BOOL_METHOD(spline_loop);
+	GETTER_SETTER_BOOL_METHOD(spline_polygonal);
+	static size_t spline_point_index(T* p, lua_State* L, int index)
+	{
+		int i= IArg(index);
+		if(i < 1)
+		{
+			luaL_error(L, "Invalid spline point index.");
+		}
+		size_t ret= static_cast<size_t>(i) - 1;
+		if(ret >= p->get_spline_size())
+		{
+			luaL_error(L, "Invalid spline point index.");
+		}
+		return ret;
+	}
+	static int get_spline_size(T* p, lua_State* L)
+	{
+		lua_pushnumber(L, p->get_spline_size());
+		return 1;
+	}
+	static int get_spline_point(T* p, lua_State* L)
+	{
+		size_t point= spline_point_index(p, L, 1);
+		lua_pushnumber(L, p->get_spline_point(point));
+		return 1;
+	}
+	static int set_spline_point(T* p, lua_State* L)
+	{
+		size_t point= spline_point_index(p, L, 1);
+		p->set_spline_point(point, FArg(2));
+		COMMON_RETURN_SELF;
+	}
+	static int add_spline_point(T* p, lua_State* L)
+	{
+		p->add_spline_point(FArg(1));
+		COMMON_RETURN_SELF;
+	}
+	static int remove_spline_point(T* p, lua_State* L)
+	{
+		if(p->get_spline_empty())
+		{
+			COMMON_RETURN_SELF;
+		}
+		size_t point= 0;
+		if(lua_isnil(L, 1))
+		{
+			point= p->get_spline_size()-1;
+		}
+		else
+		{
+			point= spline_point_index(p, L, 1);
+		}
+		p->remove_spline_point(point);
+		COMMON_RETURN_SELF;
+	}
+	static int get_spline(T* p, lua_State* L)
+	{
+		p->push_spline(L);
+		return 1;
+	}
+	static int set_spline(T* p, lua_State* L)
+	{
+		p->load_spline(L, 1);
 		COMMON_RETURN_SELF;
 	}
 	LunaModInput()
@@ -1132,6 +1474,12 @@ struct LunaModInput : Luna<ModInput>
 		ADD_METHOD(get_num_phases);
 		ADD_METHOD(remove_phase);
 		ADD_METHOD(clear_phases);
+		ADD_GET_SET_METHODS(enable_phases);
+		ADD_METHOD(get_spline_size);
+		ADD_GET_SET_METHODS(spline_point);
+		ADD_METHOD(add_spline_point);
+		ADD_METHOD(remove_spline_point);
+		ADD_GET_SET_METHODS(spline);
 	}
 };
 LUA_REGISTER_CLASS(ModInput);

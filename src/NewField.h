@@ -155,6 +155,7 @@ struct NewFieldColumn : ActorFrame
 	// If you add another ModifiableValue member, be sure to add it to the
 	// loop in set_column_info.  They need to have the timing data passed to
 	// them so mods can have start and end times.
+	ModifiableValue m_time_offset;
 	ModifiableValue m_quantization_multiplier;
 	ModifiableValue m_quantization_offset;
 

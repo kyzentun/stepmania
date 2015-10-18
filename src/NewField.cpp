@@ -32,6 +32,7 @@ NewFieldColumn::NewFieldColumn()
 	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
 	 m_add_y_offset_to_position(true), m_holds_skewed_by_mods(true),
 	 m_twirl_holds(true), m_use_moddable_hold_normal(false),
+	 m_time_offset(&m_mod_manager, 0.0),
 	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
 	 m_speed_mod(&m_mod_manager, 0.0),
@@ -81,7 +82,8 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 
 	m_mod_manager.column= column;
 
-	for(auto&& moddable : {&m_quantization_multiplier, &m_quantization_offset,
+	for(auto&& moddable : {&m_time_offset, &m_quantization_multiplier,
+				&m_quantization_offset,
 				&m_speed_mod, &m_reverse_offset_pixels, &m_reverse_percent,
 				&m_center_percent, &m_note_alpha, &m_note_glow, &m_receptor_alpha,
 				&m_receptor_glow, &m_explosion_alpha, &m_explosion_glow})
@@ -122,6 +124,13 @@ void NewFieldColumn::update_displayed_time(double beat, double second)
 {
 	if(m_use_game_music_beat)
 	{
+		mod_val_inputs input(beat, second);
+		double offset= m_time_offset.evaluate(input);
+		if(offset != 0.0)
+		{
+			second+= offset;
+			beat= m_timing_data->GetBeatFromElapsedTime(second);
+		}
 		set_displayed_time(beat, second);
 	}
 }
@@ -1542,6 +1551,7 @@ ADD_TRANS_PART(trans, zoom);
 
 struct LunaNewFieldColumn : Luna<NewFieldColumn>
 {
+	GET_MEMBER(time_offset);
 	GET_MEMBER(quantization_multiplier);
 	GET_MEMBER(quantization_offset);
 	GET_MEMBER(speed_mod);
@@ -1664,6 +1674,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	}
 	LunaNewFieldColumn()
 	{
+		ADD_METHOD(get_time_offset);
 		ADD_METHOD(get_quantization_multiplier);
 		ADD_METHOD(get_quantization_offset);
 		ADD_METHOD(get_speed_mod);

@@ -131,52 +131,12 @@ enum ModInputMetaType
 {
 	MIMT_Scalar,
 	MIMT_PerFrame,
-	MIMT_PerNote
+	MIMT_PerNote,
+	MIMT_Invalid
 };
 
 struct ModInput
 {
-	ModInputType m_type;
-	double m_scalar;
-	double m_offset;
-
-	// The input value can be passed through a couple of modifiers to change
-	// its range.  These modifiers are applied before the scalar and offset.
-	// So it works like this:
-	//   result= apply_rep_mod(input)
-	//   result= apply_phase_mod(result)
-	//   return (result * scalar) + offset
-	// These input modifiers are necessary for mods like beat and hidden,
-
-	// The rep modifier makes a sub-range repeat.  rep_begin is the beginning
-	// of the range, rep_end is the end.  The result of the rep modifier will
-	// never equal rep_end.
-	// Example:
-	//   rep_begin is 1.
-	//   rep_end is 2.
-	//     input is 2, result is 1.
-	//     input is .25, result is 1.25.
-	//     input is -.25, result is 1.75.
-	double m_rep_begin;
-	double m_rep_end;
-	// The phase modifier applies a multiplier and an offset in its range.
-	// Equation: result= ((input - phase_start) * multiplier) + offset
-	// The range includes the beginning, but not the end.
-	// Input outside its range is not modified.
-	// A ModInput can have multiple phases to simplify creating mods that need
-	// multiple phases. (say, when beat ramps up the amplitude on a sine wave,
-	// then ramps it down.  Between beats is one phase, ramp up is another, and
-	// ramp down is a third.)
-	// If two phases overlap, the one that is used is undefined.
-	// Example:
-	//   phase start is .5.
-	//   phase finish is 1.
-	//   phase mult is 2.
-	//   phase offset is .5.
-	//     input is .4, result is .4 (outside the phase).
-	//     input is .5, result is .5 (.5 - .5 is 0, 0 * 2 is 0, 0 + .5 is .5)
-	//     input is .6, result is .7 (.6 - .5 is .1, .1 * 2 is .2, .2 + .5 is .7)
-	//     input is 1, result is 1 (outside the phase).
 	struct phase
 	{
 		phase()
@@ -187,22 +147,9 @@ struct ModInput
 		double mult;
 		double offset;
 	};
-	std::vector<phase> m_phases;
-	phase m_default_phase;
-
-	// Special stuff for ModInputType_Spline.
-	CubicSpline m_spline;
-	bool m_loop_spline;
-	bool m_polygonal_spline;
-
-	double (ModInput::* rep_apple)(double);
-	double (ModInput::* phase_apple)(double);
-	double (ModInput::* spline_apple)(double);
-	double mod_val_inputs::* choice;
-
 	ModInput()
-		:m_type(MIT_Scalar), m_scalar(0.0), m_offset(0.0),
-		m_rep_begin(0.0), m_rep_end(0.0),
+		:m_parent(nullptr), m_type(ModInputType_Invalid), m_scalar(0.0),
+		m_offset(0.0), m_rep_begin(0.0), m_rep_end(0.0),
 		m_loop_spline(false), m_polygonal_spline(false),
 		rep_apple(nullptr), phase_apple(nullptr), spline_apple(nullptr),
 		choice(&mod_val_inputs::scalar)
@@ -227,7 +174,7 @@ struct ModInput
 			case MIT_YOffset:
 				return MIMT_PerNote;
 			default:
-				break;
+				return MIMT_Invalid;
 		}
 		return MIMT_Scalar;
 	}
@@ -238,8 +185,8 @@ struct ModInput
 	void load_one_phase(lua_State* L, int index, size_t phase);
 	void load_def_phase(lua_State* L, int index);
 	void load_phases(lua_State* L, int index);
-	void load_from_lua(lua_State* L, int index);
-	void set_type(ModInputType t);
+	void load_spline(lua_State* L, int index);
+	void load_from_lua(lua_State* L, int index, ModFunction* parent);
 	phase const* find_phase(double input);
 	double apply_rep(double input)
 	{
@@ -287,6 +234,94 @@ struct ModInput
 		return ret + m_offset;
 	}
 	virtual void PushSelf(lua_State* L);
+
+	void send_repick();
+	void send_spline_repick();
+	ModInputType get_type() { return m_type; }
+	void set_type(ModInputType t);
+	double get_scalar() { return m_scalar; }
+	void set_scalar(double s);
+	double get_offset() { return m_offset; }
+	void set_offset(double s);
+	void push_rep(lua_State* L);
+	void push_all_phases(lua_State* L);
+	size_t get_num_phases() { return m_phases.size(); }
+	void enable_phases();
+	void disable_phases();
+	void check_disable_phases();
+	bool get_enable_phases() { return phase_apple != nullptr; }
+	void remove_phase(size_t phase);
+	void clear_phases();
+	void enable_spline();
+	void disable_spline();
+	bool get_enable_spline() { return spline_apple != nullptr; }
+	bool get_spline_loop() { return m_loop_spline; }
+	void set_spline_loop(bool b);
+	bool get_spline_polygonal() { return m_polygonal_spline; }
+	void set_spline_polygonal(bool b);
+	size_t get_spline_size() { return m_spline.size(); }
+	bool get_spline_empty() { return m_spline.empty(); }
+	double get_spline_point(size_t p);
+	void set_spline_point(size_t p, double value);
+	void add_spline_point(double value);
+	void remove_spline_point(size_t p);
+	void push_spline(lua_State* L);
+
+private:
+	ModFunction* m_parent;
+	ModInputType m_type;
+	double m_scalar;
+	double m_offset;
+
+	// The input value can be passed through a couple of modifiers to change
+	// its range.  These modifiers are applied before the scalar and offset.
+	// So it works like this:
+	//   result= apply_rep_mod(input)
+	//   result= apply_phase_mod(result)
+	//   return (result * scalar) + offset
+	// These input modifiers are necessary for mods like beat and hidden,
+
+	// The rep modifier makes a sub-range repeat.  rep_begin is the beginning
+	// of the range, rep_end is the end.  The result of the rep modifier will
+	// never equal rep_end.
+	// Example:
+	//   rep_begin is 1.
+	//   rep_end is 2.
+	//     input is 2, result is 1.
+	//     input is .25, result is 1.25.
+	//     input is -.25, result is 1.75.
+	double m_rep_begin;
+	double m_rep_end;
+	// The phase modifier applies a multiplier and an offset in its range.
+	// Equation: result= ((input - phase_start) * multiplier) + offset
+	// The range includes the beginning, but not the end.
+	// Input outside its range is not modified.
+	// A ModInput can have multiple phases to simplify creating mods that need
+	// multiple phases. (say, when beat ramps up the amplitude on a sine wave,
+	// then ramps it down.  Between beats is one phase, ramp up is another, and
+	// ramp down is a third.)
+	// If two phases overlap, the one that is used is undefined.
+	// Example:
+	//   phase start is .5.
+	//   phase finish is 1.
+	//   phase mult is 2.
+	//   phase offset is .5.
+	//     input is .4, result is .4 (outside the phase).
+	//     input is .5, result is .5 (.5 - .5 is 0, 0 * 2 is 0, 0 + .5 is .5)
+	//     input is .6, result is .7 (.6 - .5 is .1, .1 * 2 is .2, .2 + .5 is .7)
+	//     input is 1, result is 1 (outside the phase).
+	std::vector<phase> m_phases;
+	phase m_default_phase;
+
+	// Special stuff for ModInputType_Spline.
+	CubicSpline m_spline;
+	bool m_loop_spline;
+	bool m_polygonal_spline;
+
+	double (ModInput::* rep_apple)(double);
+	double (ModInput::* phase_apple)(double);
+	double (ModInput::* spline_apple)(double);
+	double mod_val_inputs::* choice;
 };
 
 enum ModFunctionType
@@ -328,6 +363,12 @@ struct ModFunction
 	// solving every frame.
 	bool needs_per_frame_update() { return !m_per_frame_inputs.empty(); }
 	void per_frame_update(mod_val_inputs const& input);
+	size_t find_child(ModInput* child);
+	void remove_child_from_percoset(size_t child_index,
+		vector<size_t>& percoset);
+	void recategorize(ModInput* child, ModInputMetaType old_meta,
+		ModInputMetaType new_meta);
+	void repick(ModInput* child);
 
 	double evaluate(mod_val_inputs const& input)
 	{
@@ -361,6 +402,8 @@ struct ModFunction
 	double square_eval();
 	double triangle_eval();
 	double spline_eval();
+	void set_type(ModFunctionType type);
+	ModFunctionType get_type() { return m_type; }
 	bool load_from_lua(lua_State* L, int index);
 	void push_inputs(lua_State* L, int table_index);
 	size_t num_inputs() { return m_inputs.size(); }
@@ -381,6 +424,7 @@ private:
 	void per_frame_update_spline(mod_val_inputs const& input);
 	void per_note_update_spline(mod_val_inputs const& input);
 
+	bool m_being_loaded;
 	ModFunctionType m_type;
 	vector<ModInput> m_inputs;
 	vector<size_t> m_per_note_inputs;

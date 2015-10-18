@@ -40,6 +40,7 @@ CubicSpline() :m_spatial_extent(0.0f) {}
 	void get_coefficients(size_t i, float& b, float& c, float& d) const;
 	void set_point_and_coefficients(size_t i, float a, float b, float c, float d);
 	void get_point_and_coefficients(size_t i, float& a, float& b, float& c, float& d) const;
+	void remove_point(size_t i);
 	void resize(size_t s);
 	size_t size() const;
 	bool empty() const;

@@ -175,6 +175,18 @@ static int set_##method_name(T* p, lua_State* L) \
 	COMMON_RETURN_SELF; \
 }
 
+#define GETTER_SETTER_BOOL_METHOD(bool_name) \
+static int get_##bool_name(T* p, lua_State* L) \
+{ \
+	lua_pushboolean(L, p->get_##bool_name()); \
+	return 1; \
+} \
+static int set_##bool_name(T* p, lua_State* L) \
+{ \
+	p->set_##bool_name(lua_toboolean(L, 1)); \
+	COMMON_RETURN_SELF; \
+}
+
 #define GET_SET_FLOAT_METHOD(method_name, float_name) \
 static int get_##method_name(T* p, lua_State* L) \
 { \
@@ -184,6 +196,18 @@ static int get_##method_name(T* p, lua_State* L) \
 static int set_##method_name(T* p, lua_State* L) \
 { \
 	p->float_name= FArg(1); \
+	COMMON_RETURN_SELF; \
+}
+
+#define GETTER_SETTER_FLOAT_METHOD(float_name) \
+static int get_##float_name(T* p, lua_State* L) \
+{ \
+	lua_pushnumber(L, p->get_##float_name()); \
+	return 1; \
+} \
+static int set_##float_name(T* p, lua_State* L) \
+{ \
+	p->set_##float_name(FArg(1)); \
 	COMMON_RETURN_SELF; \
 }
 

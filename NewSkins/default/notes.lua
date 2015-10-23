@@ -7,7 +7,10 @@
 -- The function must return a table containing all the information and actors
 -- needed for the columns given.  Missing information or actors will be
 -- filled with zeros or blank actors.
-return function(button_list)
+return function(button_list, stepstype)
+	-- This example doesn't use the stepstype arg, but it is provided in case
+	-- someone needs it.
+
 	-- rots is a convenience conversion table to easily take care of buttons
 	-- that should be rotated.
 	local rots= {Left= 90, Down= 0, Up= 180, Right= 270}

@@ -32,6 +32,7 @@ NewFieldColumn::NewFieldColumn()
 	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
 	 m_add_y_offset_to_position(true), m_holds_skewed_by_mods(true),
 	 m_twirl_holds(true), m_use_moddable_hold_normal(false),
+	 m_show_player_overlay_notes(false),
 	 m_time_offset(&m_mod_manager, 0.0),
 	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
@@ -981,7 +982,7 @@ void NewFieldColumn::draw_holds_internal()
 		double const quantization= quantization_for_time(input);
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
-		m_newskin->get_hold_render_data(tn.subType, active, reverse, quantization, beat, data);
+		m_newskin->get_hold_render_data(tn.subType, m_show_player_overlay_notes, tn.pn, active, reverse, quantization, beat, data);
 		double hold_draw_beat;
 		double hold_draw_second;
 		get_hold_draw_time(tn, hold_beat, hold_draw_beat, hold_draw_second);
@@ -998,9 +999,9 @@ struct tap_draw_info
 	double draw_beat;
 	double draw_second;
 	double y_offset;
-	Actor* act;
+	vector<Actor*> act;
 	tap_draw_info()
-		:draw_beat(0.0), draw_second(0.0), y_offset(0.0), act(nullptr)
+		:draw_beat(0.0), draw_second(0.0), y_offset(0.0)
 	{}
 };
 
@@ -1070,7 +1071,7 @@ void NewFieldColumn::draw_taps_internal()
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
 				double const quantization= quantization_for_time(mod_input);
-				acts[0].act= m_newskin->get_tap_actor(part, quantization, beat);
+				m_newskin->get_tap_actor(acts[0].act, part, m_show_player_overlay_notes, tn.pn, quantization, beat);
 				acts[0].draw_second= head_second;
 			}
 		}
@@ -1084,7 +1085,7 @@ void NewFieldColumn::draw_taps_internal()
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
 				double const quantization= quantization_for_time(mod_input);
-				acts[0].act= m_newskin->get_optional_actor(tail_part, quantization, beat);
+				m_newskin->get_optional_actor(acts[0].act, tail_part, m_show_player_overlay_notes, tn.pn, quantization, beat);
 				acts[0].draw_second= tail_second;
 			}
 			acts[1].draw_beat= head_beat;
@@ -1093,7 +1094,7 @@ void NewFieldColumn::draw_taps_internal()
 			{
 				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[1].y_offset);
 				double const quantization= quantization_for_time(mod_input);
-				acts[1].act= m_newskin->get_optional_actor(head_part, quantization, beat);
+				m_newskin->get_optional_actor(acts[1].act, head_part, m_show_player_overlay_notes, tn.pn, quantization, beat);
 				acts[1].draw_second= head_second;
 			}
 		}
@@ -1101,7 +1102,7 @@ void NewFieldColumn::draw_taps_internal()
 		{
 			// Tails are optional, get_optional_actor returns nullptr if the
 			// noteskin doesn't have them.
-			if(act.act != nullptr)
+			if(!act.act.empty())
 			{
 				mod_val_inputs input(act.draw_beat, act.draw_second, m_curr_beat, m_curr_second, act.y_offset);
 				double alpha= m_note_alpha.evaluate(input);
@@ -1112,10 +1113,13 @@ void NewFieldColumn::draw_taps_internal()
 				{
 					trans.pos.y+= apply_reverse_shift(act.y_offset);
 				}
-				act.act->set_transform(trans);
-				act.act->SetDiffuseAlpha(alpha);
-				act.act->SetGlow(RageColor(1, 1, 1, glow));
-				act.act->Draw();
+				for(auto&& real_act : act.act)
+				{
+					real_act->set_transform(trans);
+					real_act->SetDiffuseAlpha(alpha);
+					real_act->SetGlow(RageColor(1, 1, 1, glow));
+					real_act->Draw();
+				}
 			}
 		}
 	}
@@ -1575,6 +1579,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_SET_BOOL_METHOD(holds_skewed_by_mods, m_holds_skewed_by_mods);
 	GET_SET_BOOL_METHOD(twirl_holds, m_twirl_holds);
 	GET_SET_BOOL_METHOD(use_moddable_hold_normal, m_use_moddable_hold_normal);
+	GET_SET_BOOL_METHOD(show_player_overlay_notes, m_show_player_overlay_notes);
 	static int get_curr_beat(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->get_curr_beat());
@@ -1698,6 +1703,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_GET_SET_METHODS(holds_skewed_by_mods);
 		ADD_GET_SET_METHODS(twirl_holds);
 		ADD_GET_SET_METHODS(use_moddable_hold_normal);
+		ADD_GET_SET_METHODS(show_player_overlay_notes);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
 		ADD_METHOD(set_pixels_visible_before);

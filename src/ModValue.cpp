@@ -365,7 +365,18 @@ void ModInput::load_phases(lua_State* L, int index)
 			load_one_phase(L, lua_gettop(L), i);
 			lua_pop(L, 1);
 		}
+		sort_phases();
 	}
+}
+
+bool compare_phases(ModInput::phase left, ModInput::phase right)
+{
+	return left.start < right.start;
+}
+
+void ModInput::sort_phases()
+{
+	stable_sort(m_phases.begin(), m_phases.end(), compare_phases);
 }
 
 void ModInput::load_spline(lua_State* L, int index)
@@ -1341,6 +1352,7 @@ struct LunaModInput : Luna<ModInput>
 			luaL_error(L, "Args to ModInput:set_phase must be an index and a table.");
 		}
 		p->load_one_phase(L, 2, phase);
+		p->sort_phases();
 		COMMON_RETURN_SELF;
 	}
 	static int set_default_phase(T* p, lua_State* L)

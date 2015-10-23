@@ -185,6 +185,7 @@ struct ModInput
 	void load_one_phase(lua_State* L, int index, size_t phase);
 	void load_def_phase(lua_State* L, int index);
 	void load_phases(lua_State* L, int index);
+	void sort_phases();
 	void load_spline(lua_State* L, int index);
 	void load_from_lua(lua_State* L, int index, ModFunction* parent);
 	phase const* find_phase(double input);

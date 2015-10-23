@@ -139,6 +139,12 @@ struct NewFieldColumn : ActorFrame
 	bool m_twirl_holds;
 	bool m_use_moddable_hold_normal;
 
+	// When in routine mode (multiple players on the same notefield),
+	// m_show_player_overlay_notes should be set to true.  The noteskin then
+	// controls whether the overlay is shown instead of or in addition to the
+	// normal note.
+	bool m_show_player_overlay_notes;
+
 	struct column_status
 	{
 		column_status()

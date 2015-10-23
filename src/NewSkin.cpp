@@ -308,7 +308,7 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 		}
 		else
 		{
-			RString resolved= NEWSKIN->get_path_to_file_in_skin(load_skin, path);
+			RString resolved= NEWSKIN->get_path(load_skin, path);
 			if(resolved.empty())
 			{
 				as_tex= TEXTUREMAN->LoadTexture(TEXTUREMAN->GetDefaultTextureID());
@@ -358,14 +358,29 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 	return true;
 }
 
-Actor* NewSkinColumn::get_tap_actor(NewSkinTapPart type, double quantization, double beat)
+void NewSkinColumn::get_tap_actor(vector<Actor*>& acts, NewSkinTapPart type,
+	bool get_overlay, size_t pn, double quantization, double beat)
 {
 	const size_t type_index= type;
 	ASSERT_M(type < m_taps.size(), "Invalid NewSkinTapPart type.");
-	return m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]);
+	if(get_overlay && !m_player_tap_overlays.empty())
+	{
+		if(!m_player_overlay_overrides)
+		{
+			acts.push_back(m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
+		}
+		auto& tap_set= m_player_tap_overlays[pn%m_player_tap_overlays.size()];
+		acts.push_back(tap_set[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
+	}
+	else
+	{
+		acts.push_back(m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
+	}
 }
 
-Actor* NewSkinColumn::get_optional_actor(NewSkinTapOptionalPart type, double quantization, double beat)
+void NewSkinColumn::get_optional_actor(vector<Actor*>& acts,
+	NewSkinTapOptionalPart type, bool get_overlay, size_t pn,
+	double quantization, double beat)
 {
 	const size_t type_index= type;
 	ASSERT_M(type < m_optional_taps.size(), "Invalid NewSkinTapOptionalPart type.");
@@ -378,16 +393,29 @@ Actor* NewSkinColumn::get_optional_actor(NewSkinTapOptionalPart type, double qua
 	{
 		if(type_index % 2 == 0) // heads fallback to taps.
 		{
-			return get_tap_actor(NSTP_Tap, quantization, beat);
+			get_tap_actor(acts, NSTP_Tap, get_overlay, pn, quantization, beat);
+			return;
 		}
-		return nullptr;
+		return;
 	}
-	return tap->get_quantized(quantization, beat, m_rotations[type_index]);
+	if(get_overlay && !m_player_tap_overlays.empty())
+	{
+		if(!m_player_overlay_overrides)
+		{
+			acts.push_back(tap->get_quantized(quantization, beat, m_rotations[type_index]));
+		}
+		auto& tap_set= m_player_tap_overlays[pn%m_player_tap_overlays.size()];
+		acts.push_back(tap_set[NSTP_Tap].get_quantized(quantization, beat, m_rotations[type_index]));
+	}
+	else
+	{
+		acts.push_back(tap->get_quantized(quantization, beat, m_rotations[type_index]));
+	}
 }
 
 void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type,
-	bool active, bool reverse, double quantization, double beat,
-	QuantizedHoldRenderData& data)
+	bool get_overlay, size_t pn, bool active, bool reverse, double quantization,
+	double beat, QuantizedHoldRenderData& data)
 {
 	if(sub_type >= NUM_TapNoteSubType)
 	{
@@ -448,12 +476,44 @@ bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
 	return true;
 }
 
+bool load_tap_set_from_lua(lua_State* L, int taps_index, vector<QuantizedTap>& tap_set, string& insanity_diagnosis)
+{
+	int original_top= lua_gettop(L);
+#define RETURN_NOT_SANE(message) lua_settop(L, original_top); insanity_diagnosis= message; return false;
+	if(!lua_istable(L, taps_index))
+	{
+		RETURN_NOT_SANE("Tap set is not a table.");
+	}
+	string sub_sanity;
+	tap_set.resize(NUM_NewSkinTapPart);
+	for(size_t part= NSTP_Tap; part < NUM_NewSkinTapPart; ++part)
+	{
+		Enum::Push(L, static_cast<NewSkinTapPart>(part));
+		lua_gettable(L, taps_index);
+		if(!lua_istable(L, -1))
+		{
+			RETURN_NOT_SANE(ssprintf("Part %s not returned.",
+					NewSkinTapPartToString(static_cast<NewSkinTapPart>(part)).c_str()));
+		}
+		if(!tap_set[part].load_from_lua(L, lua_gettop(L),
+				sub_sanity))
+		{
+			RETURN_NOT_SANE(ssprintf("Error loading part %s: %s",
+					NewSkinTapPartToString(static_cast<NewSkinTapPart>(part)).c_str(),
+					sub_sanity.c_str()));
+		}
+	}
+#undef RETURN_NOT_SANE
+	return true;
+}
+
 bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, string& insanity_diagnosis)
 {
 	// Pop the table we're loading from off the stack when returning.
 	int original_top= lua_gettop(L) - 1;
 #define RETURN_NOT_SANE(message) lua_settop(L, original_top); insanity_diagnosis= message; return false;
 	vector<QuantizedTap> temp_taps;
+	vector<vector<QuantizedTap> > temp_player_taps;
 	vector<QuantizedTap*> temp_optionals(NUM_NewSkinTapOptionalPart, nullptr);
 	vector<vector<QuantizedHold> > temp_holds;
 	vector<vector<QuantizedHold> > temp_reverse_holds;
@@ -464,24 +524,10 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 		RETURN_NOT_SANE("No taps given.");
 	}
 	int taps_index= lua_gettop(L);
-	temp_taps.resize(NUM_NewSkinTapPart);
 	string sub_sanity;
-	for(size_t part= NSTP_Tap; part < NUM_NewSkinTapPart; ++part)
+	if(!load_tap_set_from_lua(L, taps_index, temp_taps, sub_sanity))
 	{
-		Enum::Push(L, static_cast<NewSkinTapPart>(part));
-		lua_gettable(L, taps_index);
-		if(!lua_istable(L, -1))
-		{
-			RETURN_NOT_SANE(ssprintf("Part %s not returned.",
-					NewSkinTapPartToString(static_cast<NewSkinTapPart>(part)).c_str()));
-		}
-		if(!temp_taps[part].load_from_lua(L, lua_gettop(L),
-				sub_sanity))
-		{
-			RETURN_NOT_SANE(ssprintf("Error loading part %s: %s",
-					NewSkinTapPartToString(static_cast<NewSkinTapPart>(part)).c_str(),
-					sub_sanity.c_str()));
-		}
+		RETURN_NOT_SANE(sub_sanity);
 	}
 	lua_settop(L, taps_index-1);
 	lua_getfield(L, index, "optional_taps");
@@ -506,6 +552,23 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 		}
 	}
 	lua_settop(L, optional_taps_index-1);
+	lua_getfield(L, index, "player_taps");
+	int player_taps_index= lua_gettop(L);
+	// player taps are optional.
+	if(lua_istable(L, -1))
+	{
+		size_t num_players= lua_objlen(L, player_taps_index);
+		temp_player_taps.resize(num_players);
+		for(size_t pn= 0; pn < num_players; ++pn)
+		{
+			lua_rawgeti(L, player_taps_index, pn+1);
+			if(!load_tap_set_from_lua(L, lua_gettop(L), temp_player_taps[pn], sub_sanity))
+			{
+				RETURN_NOT_SANE(ssprintf("Problem in taps for player %zu: %s", pn, sub_sanity.c_str()));
+			}
+		}
+	}
+	lua_settop(L, player_taps_index-1);
 	if(!load_holds_from_lua(L, index, temp_holds, "holds", load_skin,
 			insanity_diagnosis))
 	{
@@ -524,6 +587,7 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	m_taps.swap(temp_taps);
+	m_player_tap_overlays.swap(temp_player_taps);
 	clear_optionals();
 	m_optional_taps.swap(temp_optionals);
 	m_holds.swap(temp_holds);
@@ -619,6 +683,14 @@ bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, Ne
 	m_columns.swap(temp_columns);
 	m_loaded= true;
 	return true;
+}
+
+void NewSkinData::set_player_overlay_overrides(bool over)
+{
+	for(auto&& col : m_columns)
+	{
+		col.m_player_overlay_overrides= over;
+	}
 }
 
 bool NewSkinLoader::load_from_file(std::string const& path)
@@ -732,6 +804,8 @@ bool NewSkinLoader::load_from_lua(lua_State* L, int index, string const& name,
 	lua_pop(L, 1);
 	lua_getfield(L, index, "supports_all_buttons");
 	m_supports_all_buttons= lua_toboolean(L, -1);
+	lua_getfield(L, index, "player_overlay_overrides");
+	m_player_overlay_overrides= lua_toboolean(L, -1);
 	lua_settop(L, original_top);
 #undef RETURN_NOT_SANE
 	m_skin_name= name;
@@ -850,7 +924,7 @@ bool NewSkinLoader::push_loader_function(lua_State* L, string const& loader)
 	{
 		return false;
 	}
-	string found_path= NEWSKIN->get_path_to_file_in_skin(this, loader);
+	string found_path= NEWSKIN->get_path(this, loader);
 	if(found_path.empty())
 	{
 		LuaHelpers::ReportScriptError("Noteskin " + m_skin_name + " points to a"
@@ -873,7 +947,8 @@ bool NewSkinLoader::push_loader_function(lua_State* L, string const& loader)
 }
 
 bool NewSkinLoader::load_layer_set_into_data(lua_State* L,
-	int button_list_index, size_t columns, vector<string> const& loader_set,
+	int button_list_index, int stype_index, size_t columns,
+	vector<string> const& loader_set,
 	vector<NewSkinLayer>& dest, string& insanity_diagnosis)
 {
 	int original_top= lua_gettop(L);
@@ -888,7 +963,8 @@ bool NewSkinLoader::load_layer_set_into_data(lua_State* L,
 		}
 		RString error= "Error running " + m_load_path + loader_set[i] + ": ";
 		lua_pushvalue(L, button_list_index);
-		if(!LuaHelpers::RunScriptOnStack(L, error, 1, 1, true))
+		lua_pushvalue(L, stype_index);
+		if(!LuaHelpers::RunScriptOnStack(L, error, 2, 1, true))
 		{
 			RETURN_NOT_SANE("Error running loader " + loader_set[i]);
 		}
@@ -910,6 +986,7 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 	Lua* L= LUA->Get();
 	int original_top= lua_gettop(L);
 #define RETURN_NOT_SANE(message) lua_settop(L, original_top); LUA->Release(L); insanity_diagnosis= message; return false;
+	LuaThreadVariable skin_var("skin_name", m_skin_name);
 	lua_createtable(L, button_list.size(), 0);
 	for(size_t b= 0; b < button_list.size(); ++b)
 	{
@@ -917,13 +994,16 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 		lua_rawseti(L, -2, b+1);
 	}
 	int button_list_index= lua_gettop(L);
+	Enum::Push(L, stype);
+	int stype_index= lua_gettop(L);
 	if(!push_loader_function(L, m_notes_loader))
 	{
 		RETURN_NOT_SANE("Could not load tap loader.");
 	}
 	RString error= "Error running " + m_load_path + m_notes_loader + ": ";
 	lua_pushvalue(L, button_list_index);
-	if(!LuaHelpers::RunScriptOnStack(L, error, 1, 1, true))
+	lua_pushvalue(L, stype_index);
+	if(!LuaHelpers::RunScriptOnStack(L, error, 2, 1, true))
 	{
 		RETURN_NOT_SANE("Error running loader for notes.");
 	}
@@ -932,12 +1012,13 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 	{
 		RETURN_NOT_SANE("Invalid data from loader: " + sub_sanity);
 	}
-	if(!load_layer_set_into_data(L, button_list_index, button_list.size(), m_below_loaders,
+	dest.set_player_overlay_overrides(m_player_overlay_overrides);
+	if(!load_layer_set_into_data(L, button_list_index, stype_index, button_list.size(), m_below_loaders,
 			dest.m_layers_below_notes, sub_sanity))
 	{
 		RETURN_NOT_SANE("Error running layer below loaders: " + sub_sanity);
 	}
-	if(!load_layer_set_into_data(L, button_list_index, button_list.size(), m_above_loaders,
+	if(!load_layer_set_into_data(L, button_list_index, stype_index, button_list.size(), m_above_loaders,
 			dest.m_layers_above_notes, sub_sanity))
 	{
 		RETURN_NOT_SANE("Error running layer above loaders: " + sub_sanity);

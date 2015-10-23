@@ -286,7 +286,7 @@ public:
 	// These next functions should all be overridden by a derived class that has its own tweening states to handle.
 	virtual void SetCurrentTweenStart() {}
 	virtual void EraseHeadTween() {}
-	virtual void UpdatePercentThroughTween( float PercentThroughTween ) {}
+	virtual void UpdatePercentThroughTween( float PercentThroughTween ) { UNUSED(PercentThroughTween); }
 
 	/**
 	 * @brief Retrieve the Actor's name.

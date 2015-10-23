@@ -220,11 +220,14 @@ struct QuantizedHold
 
 struct NewSkinColumn
 {
-	Actor* get_tap_actor(NewSkinTapPart type, double quantization, double beat);
-	Actor* get_optional_actor(NewSkinTapOptionalPart type, double quantization,
-		double beat);
-	void get_hold_render_data(TapNoteSubType sub_type, bool active,
-		bool reverse, double quantization, double beat,
+	// get_tap_actor, get_optional_actor, and get_hold_render_data take a
+	// size_t player number to allow for more than 2 players.
+	void get_tap_actor(std::vector<Actor*>& acts, NewSkinTapPart type,
+		bool get_overlay, size_t pn, double quantization, double beat);
+	void get_optional_actor(std::vector<Actor*>& acts, NewSkinTapOptionalPart type,
+		bool get_overlay, size_t pn, double quantization, double beat);
+	void get_hold_render_data(TapNoteSubType sub_type, bool get_overlay,
+		size_t pn, bool active, bool reverse, double quantization, double beat,
 		QuantizedHoldRenderData& data);
 	double get_width() { return m_width; }
 	double get_padding() { return m_padding; }
@@ -273,22 +276,30 @@ struct NewSkinColumn
 		}
 	}
 	NewSkinColumn()
-		:m_optional_taps(NUM_NewSkinTapOptionalPart, nullptr)
+		:m_player_overlay_overrides(false), m_optional_taps(NUM_NewSkinTapOptionalPart, nullptr)
 	{}
 	~NewSkinColumn()
 	{
 		clear_optionals();
 	}
+	bool m_player_overlay_overrides;
 private:
 	// m_taps is indexed by NewSkinTapPart.
 	std::vector<QuantizedTap> m_taps;
 	// m_optional_taps is indexed by NewSkinTapOptionalPart.
 	// If an entry is null, the skin doesn't use that part.
 	std::vector<QuantizedTap*> m_optional_taps;
+	// Dimensions of m_player_tap_overlays:
+	// player number, NewSkinTapPart
+	// m_player_tap_overlays is optional.
+	// pn % overlays.size() is used when indexing, so the players wrap.
+	std::vector<std::vector<QuantizedTap> > m_player_tap_overlays;
 	// Dimensions of m_holds:
 	// note subtype, active/inactive.
 	std::vector<std::vector<QuantizedHold> > m_holds;
 	std::vector<std::vector<QuantizedHold> > m_reverse_holds;
+	std::vector<std::vector<QuantizedHold> > m_hold_overlays;
+	std::vector<std::vector<QuantizedHold> > m_reverse_hold_overlays;
 	// m_rotation_factors stores the amount to rotate each NSTP.
 	// So the noteskin can set taps to rotate 90 degrees in this column and
 	// mines to rotate 0, and taps will be rotated and mines won't.
@@ -320,6 +331,7 @@ struct NewSkinData
 	size_t num_columns() { return m_columns.size(); }
 	bool load_taps_from_lua(lua_State* L, int index, size_t columns, NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
+	void set_player_overlay_overrides(bool over);
 
 	// The layers are public so that the NewFieldColumns can go through and
 	// take ownership of the actors after loading.
@@ -334,7 +346,7 @@ struct NewSkinLoader
 {
 	static const size_t max_layers= 16;
 	NewSkinLoader()
-		:m_supports_all_buttons(false)
+		:m_supports_all_buttons(false), m_player_overlay_overrides(false)
 	{}
 	std::string const& get_name() const
 	{
@@ -354,6 +366,7 @@ struct NewSkinLoader
 	bool supports_needed_buttons(StepsType stype);
 	bool push_loader_function(lua_State* L, std::string const& loader);
 	bool load_layer_set_into_data(lua_State* L, int button_list_index,
+		int stype_index,
 		size_t columns, std::vector<std::string> const& loader_set,
 		std::vector<NewSkinLayer>& dest, std::string& insanity_diagnosis);
 	bool load_into_data(StepsType stype,
@@ -367,6 +380,7 @@ private:
 	std::vector<std::string> m_above_loaders;
 	std::unordered_set<std::string> m_supported_buttons;
 	bool m_supports_all_buttons;
+	bool m_player_overlay_overrides;
 };
 
 #endif

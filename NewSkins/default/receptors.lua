@@ -6,7 +6,7 @@
 -- frame, so they do not have the limitations that notes have.
 local red= {1, 0, 0, 1}
 local white= {1, 1, 1, 1}
-return function(button_list)
+return function(button_list, stepstype)
 	local ret= {}
 	local rots= {Left= 90, Down= 0, Up= 180, Right= 270}
 	for i, button in ipairs(button_list) do

@@ -36,7 +36,7 @@ void NewSkinManager::load_skins()
 	m_skins.reserve(dirs.size());
 	for(auto&& dir : dirs)
 	{
-		RString skin_file= dir + "/noteskin.lua";
+		std::string skin_file= dir + "/noteskin.lua";
 		// If noteskin.lua doesn't exist, maybe the folder is for something else.
 		// Ignore it.
 		if(FILEMAN->DoesFileExist(skin_file))
@@ -77,7 +77,15 @@ void NewSkinManager::get_skins_for_stepstype(StepsType type, std::vector<NewSkin
 	}
 }
 
-void NewSkinManager::get_skin_names_for_stepstype(StepsType type, std::vector<RString>& ret)
+void NewSkinManager::get_all_skin_names(std::vector<std::string>& ret)
+{
+	for(auto&& skin : m_skins)
+	{
+		ret.push_back(skin.get_name());
+	}
+}
+
+void NewSkinManager::get_skin_names_for_stepstype(StepsType type, std::vector<std::string>& ret)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -88,7 +96,7 @@ void NewSkinManager::get_skin_names_for_stepstype(StepsType type, std::vector<RS
 	}
 }
 
-RString NewSkinManager::get_first_skin_name_for_stepstype(StepsType type)
+std::string NewSkinManager::get_first_skin_name_for_stepstype(StepsType type)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -97,7 +105,7 @@ RString NewSkinManager::get_first_skin_name_for_stepstype(StepsType type)
 			return skin.get_name();
 		}
 	}
-	RString stype_name= StepsTypeToString(type);
+	std::string stype_name= StepsTypeToString(type);
 	LuaHelpers::ReportScriptError("No noteskin supports the stepstype " + stype_name);
 	return "default";
 }
@@ -107,7 +115,7 @@ std::vector<StepsType> const& NewSkinManager::get_supported_stepstypes()
 	return m_supported_types;
 }
 
-NewSkinLoader const* NewSkinManager::get_loader_for_skin(RString const& skin_name)
+NewSkinLoader const* NewSkinManager::get_loader_for_skin(std::string const& skin_name)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -119,7 +127,7 @@ NewSkinLoader const* NewSkinManager::get_loader_for_skin(RString const& skin_nam
 	return nullptr;
 }
 
-std::string NewSkinManager::get_path_to_file_in_skin(
+std::string NewSkinManager::get_path(
 	NewSkinLoader const* skin, std::string file)
 {
 	if(skin == nullptr)
@@ -158,7 +166,7 @@ std::string NewSkinManager::get_path_to_file_in_skin(
 	return found_path;
 }
 
-bool NewSkinManager::named_skin_exists(RString const& skin_name)
+bool NewSkinManager::named_skin_exists(std::string const& skin_name)
 {
 	for(auto&& skin : m_skins)
 	{
@@ -175,18 +183,54 @@ bool NewSkinManager::named_skin_exists(RString const& skin_name)
 
 struct LunaNewSkinManager: Luna<NewSkinManager>
 {
+	static int get_all_skin_names(T* p, lua_State* L)
+	{
+		vector<std::string> names;
+		p->get_all_skin_names(names);
+		LuaHelpers::CreateTableFromArray(names, L);
+		return 1;
+	}
 	static int get_skin_names_for_stepstype(T* p, lua_State* L)
 	{
 		StepsType stype= Enum::Check<StepsType>(L, 1);
-		vector<RString> names;
+		vector<std::string> names;
 		p->get_skin_names_for_stepstype(stype, names);
 		LuaHelpers::CreateTableFromArray(names, L);
 		return 1;
 	}
+	static int get_path(T* p, lua_State* L)
+	{
+		std::string skin_name= SArg(1);
+		std::string file_name= SArg(2);
+		NewSkinLoader const* loader= p->get_loader_for_skin(skin_name);
+		if(loader == nullptr)
+		{
+			luaL_error(L, "No such noteskin.");
+		}
+		std::string path= p->get_path(loader, file_name);
+		if(path.empty())
+		{
+			lua_pushnil(L);
+		}
+		else
+		{
+			lua_pushstring(L, path.c_str());
+		}
+		return 1;
+	}
+	static int reload_skins(T* p, lua_State* L)
+	{
+		UNUSED(L);
+		p->load_skins();
+		COMMON_RETURN_SELF;
+	}
 
 	LunaNewSkinManager()
 	{
+		ADD_METHOD(get_all_skin_names);
 		ADD_METHOD(get_skin_names_for_stepstype);
+		ADD_METHOD(get_path);
+		ADD_METHOD(reload_skins);
 	}
 };
 

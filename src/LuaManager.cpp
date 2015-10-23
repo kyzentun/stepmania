@@ -69,6 +69,10 @@ namespace LuaHelpers
 	{
 		lua_pushlstring(L, object.data(), object.size());
 	}
+	template<> void Push<std::string>(lua_State* L, std::string const& object)
+	{
+		lua_pushlstring(L, object.data(), object.size());
+	}
 
 	template<> bool FromStack<bool>(Lua* L, bool& object, int offset)
 	{

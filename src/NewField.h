@@ -42,9 +42,10 @@ struct NewFieldColumn : ActorFrame
 	void add_heads_from_layers(size_t column, std::vector<column_head>& heads,
 		std::vector<NewSkinLayer>& layers);
 	void set_column_info(size_t column, NewSkinColumn* newskin,
-		NewSkinData& skin_data,
+		NewSkinData& skin_data, std::vector<RageColor>* player_colors,
 		const NoteData* note_data, const TimingData* timing_data, double x);
 
+	RageColor get_player_color(size_t pn);
 	void get_hold_draw_time(TapNote const& tap, double const hold_beat, double& beat, double& second);
 	void draw_hold(QuantizedHoldRenderData& data, render_note const& note,
 		double head_beat, double head_second,
@@ -130,6 +131,9 @@ struct NewFieldColumn : ActorFrame
 	virtual void PushSelf(lua_State *L);
 	virtual NewFieldColumn* Copy() const;
 
+	NotePlayerizeMode get_playerize_mode() { return m_playerize_mode; }
+	void set_playerize_mode(NotePlayerizeMode mode);
+
 	bool m_use_game_music_beat;
 	bool m_show_unjudgable_notes;
 	bool m_speed_segments_enabled;
@@ -138,12 +142,6 @@ struct NewFieldColumn : ActorFrame
 	bool m_holds_skewed_by_mods;
 	bool m_twirl_holds;
 	bool m_use_moddable_hold_normal;
-
-	// When in routine mode (multiple players on the same notefield),
-	// m_show_player_overlay_notes should be set to true.  The noteskin then
-	// controls whether the overlay is shown instead of or in addition to the
-	// normal note.
-	bool m_show_player_overlay_notes;
 
 	struct column_status
 	{
@@ -193,7 +191,9 @@ private:
 	double m_pixels_visible_before_beat;
 	double m_pixels_visible_after_beat;
 	size_t m_column;
+	NotePlayerizeMode m_playerize_mode;
 	NewSkinColumn* m_newskin;
+	std::vector<RageColor>* m_player_colors;
 
 	AutoActor m_beat_bars;
 
@@ -250,6 +250,8 @@ struct NewField : ActorFrame
 	void push_columns_to_lua(lua_State* L);
 	double get_field_width() { return m_field_width; }
 
+	void set_player_color(size_t pn, RageColor const& color);
+
 	void clear_steps();
 	void set_skin(RString const& skin_name);
 	void set_steps(Steps* data);
@@ -289,6 +291,7 @@ private:
 	std::vector<NewFieldColumn> m_columns;
 	NewSkinData m_newskin;
 	NewSkinLoader m_skin_walker;
+	std::vector<RageColor> m_player_colors;
 
 	bool m_drawing_board;
 	AutoActor m_board;

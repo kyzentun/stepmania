@@ -713,6 +713,7 @@ void Actor::SetTextureRenderStates()
 {
 	DISPLAY->SetTextureWrapping( TextureUnit_1, m_bTextureWrapping );
 	DISPLAY->SetTextureFiltering( TextureUnit_1, m_bTextureFiltering );
+	DISPLAY->SetTextureFiltering( TextureUnit_2, m_bTextureFiltering );
 }
 
 void Actor::EndDraw()
@@ -1353,6 +1354,7 @@ void Actor::TweenState::Init()
 	for( int i=0; i<NUM_DIFFUSE_COLORS; i++ )
 		diffuse[i] = RageColor( 1, 1, 1, 1 );
 	glow = RageColor( 1, 1, 1, 0 );
+	mask_color= RageColor(1, 1, 1, 0);
 	aux = 0;
 }
 
@@ -1370,6 +1372,7 @@ bool Actor::TweenState::operator==( const TweenState &other ) const
 	for( unsigned i=0; i < diffuse.size(); ++i )
 		COMPARE( diffuse[i] );
 	COMPARE( glow );
+	COMPARE(mask_color);
 	COMPARE( aux );
 #undef COMPARE
 	return true;
@@ -1398,6 +1401,7 @@ void Actor::TweenState::MakeWeightedAverage( TweenState& average_out, const Twee
 		average_out.diffuse[i] = lerp( fPercentBetween, ts1.diffuse[i], ts2.diffuse[i] );
 
 	average_out.glow	= lerp( fPercentBetween, ts1.glow,        ts2.glow );
+	average_out.mask_color= lerp(fPercentBetween, ts1.mask_color, ts2.mask_color);
 	average_out.aux		= lerp( fPercentBetween, ts1.aux,         ts2.aux );
 }
 
@@ -1843,6 +1847,15 @@ public:
 	static int GetHAlign( T* p, lua_State *L )	{ lua_pushnumber( L, p->GetHorizAlign() ); return 1; }
 	static int GetVAlign( T* p, lua_State *L )	{ lua_pushnumber( L, p->GetVertAlign() ); return 1; }
 
+	static int set_mask_color(T* p, lua_State* L)
+	{
+		RageColor c;
+		c.FromStack(L, 1);
+		p->SetMaskColor(c);
+		COMMON_RETURN_SELF;
+	}
+	DEFINE_METHOD(get_mask_color, GetMaskColor());
+
 	static int GetName( T* p, lua_State *L )		{ lua_pushstring( L, p->GetName() ); return 1; }
 	static int GetParent( T* p, lua_State *L )
 	{
@@ -2082,6 +2095,8 @@ public:
 		ADD_METHOD( GetVisible );
 		ADD_METHOD( GetHAlign );
 		ADD_METHOD( GetVAlign );
+
+		ADD_GET_SET_METHODS(mask_color);
 
 		ADD_METHOD( GetName );
 		ADD_METHOD( GetParent );

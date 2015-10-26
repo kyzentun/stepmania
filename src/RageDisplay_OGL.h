@@ -68,6 +68,7 @@ public:
 	int GetMaxTextureSize() const;
 	void SetTextureFiltering( TextureUnit tu, bool b );
 	void SetEffectMode( EffectMode effect );
+	void set_color_key_shader(RageColor const& color, unsigned int tex_handle);
 	bool IsEffectModeSupported( EffectMode effect );
 	bool SupportsRenderToTexture() const;
 	unsigned CreateRenderTarget( const RenderTargetParam &param, int &iTextureWidthOut, int &iTextureHeightOut );

@@ -32,7 +32,6 @@ NewFieldColumn::NewFieldColumn()
 	 m_speed_segments_enabled(true), m_scroll_segments_enabled(true),
 	 m_add_y_offset_to_position(true), m_holds_skewed_by_mods(true),
 	 m_twirl_holds(true), m_use_moddable_hold_normal(false),
-	 m_show_player_overlay_notes(false),
 	 m_time_offset(&m_mod_manager, 0.0),
 	 m_quantization_multiplier(&m_mod_manager, 1.0),
 	 m_quantization_offset(&m_mod_manager, 0.0),
@@ -48,7 +47,9 @@ NewFieldColumn::NewFieldColumn()
 	 m_curr_beat(0.0f), m_curr_second(0.0), m_prev_curr_second(-1000.0),
 	 m_pixels_visible_before_beat(128.0f),
 	 m_pixels_visible_after_beat(1024.0f),
-	 m_newskin(nullptr), m_note_data(nullptr), m_timing_data(nullptr)
+	 m_playerize_mode(NPM_Off),
+	 m_newskin(nullptr), m_player_colors(nullptr), m_note_data(nullptr),
+	 m_timing_data(nullptr)
 {
 	m_quantization_multiplier.m_value= 1.0;
 	double default_offset= SCREEN_CENTER_Y - note_size;
@@ -70,7 +71,7 @@ void NewFieldColumn::add_heads_from_layers(size_t column,
 }
 
 void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
-	NewSkinData& skin_data,
+	NewSkinData& skin_data, std::vector<RageColor>* player_colors,
 	const NoteData* note_data, const TimingData* timing_data, double x)
 {
 	m_column= column;
@@ -79,6 +80,7 @@ void NewFieldColumn::set_column_info(size_t column, NewSkinColumn* newskin,
 	m_timing_data= timing_data;
 	m_column_mod.pos_mod.x_mod.m_value= x;
 	m_use_game_music_beat= true;
+	m_player_colors= player_colors;
 	first_note_visible_prev_frame= m_note_data->end(column);
 
 	m_mod_manager.column= column;
@@ -246,6 +248,15 @@ void NewFieldColumn::UpdateInternal(float delta)
 		head.frame.Update(delta);
 	}
 	ActorFrame::UpdateInternal(delta);
+}
+
+RageColor NewFieldColumn::get_player_color(size_t pn)
+{
+	if(m_player_colors->empty())
+	{
+		return RageColor(0, 0, 0, 0);
+	}
+	return (*m_player_colors)[pn % m_player_colors->size()];
 }
 
 struct strip_buffer
@@ -555,6 +566,11 @@ void NewFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	DISPLAY->ClearAllTextures();
 	DISPLAY->SetZTestMode(ZTEST_WRITE_ON_PASS);
 	DISPLAY->SetZWrite(true);
+	if(data.mask != nullptr)
+	{
+		RageColor player_color= get_player_color(note.note_iter->second.pn);
+		DISPLAY->set_color_key_shader(player_color, data.mask->GetTexHandle());
+	}
 	bool last_vert_set= false;
 	// Set a start and end y so that the hold can be clipped to the start and
 	// end of the field.
@@ -982,28 +998,58 @@ void NewFieldColumn::draw_holds_internal()
 		double const quantization= quantization_for_time(input);
 		bool active= tn.HoldResult.bActive && tn.HoldResult.fLife > 0.0f;
 		QuantizedHoldRenderData data;
-		m_newskin->get_hold_render_data(tn.subType, m_show_player_overlay_notes, tn.pn, active, reverse, quantization, beat, data);
+		m_newskin->get_hold_render_data(tn.subType, m_playerize_mode, tn.pn,
+			active, reverse, quantization, beat, data);
 		double hold_draw_beat;
 		double hold_draw_second;
 		get_hold_draw_time(tn, hold_beat, hold_draw_beat, hold_draw_second);
 		double passed_amount= hold_draw_beat - hold_beat;
 		if(!data.parts.empty())
 		{
-			draw_hold(data, holdit, hold_draw_beat, hold_draw_second, hold_draw_beat + NoteRowToBeat(tn.iDuration) - passed_amount, tn.end_second);
+			draw_hold(data, holdit, hold_draw_beat, hold_draw_second,
+				hold_draw_beat + NoteRowToBeat(tn.iDuration) - passed_amount,
+				tn.end_second);
 		}
 	}
 }
+
+typedef Actor* (NewSkinColumn::* get_norm_actor_fun)(size_t, double, double);
+typedef Actor* (NewSkinColumn::* get_play_actor_fun)(size_t, size_t, double);
 
 struct tap_draw_info
 {
 	double draw_beat;
 	double draw_second;
 	double y_offset;
-	vector<Actor*> act;
+	Actor* act;
 	tap_draw_info()
-		:draw_beat(0.0), draw_second(0.0), y_offset(0.0)
+		:draw_beat(0.0), draw_second(0.0), y_offset(0.0), act(nullptr)
 	{}
 };
+
+void set_tap_actor_info(tap_draw_info& draw_info, NewFieldColumn& col,
+	NewSkinColumn* newskin, get_norm_actor_fun get_normal,
+	get_play_actor_fun get_playerized, size_t part,
+	size_t pn, double draw_beat, double draw_second, double yoff,
+	double tap_beat, double tap_second, double anim_beat)
+{
+	draw_info.draw_beat= draw_beat;
+	draw_info.y_offset= yoff;
+	if(col.y_offset_visible(yoff) == 0)
+	{
+		if(col.get_playerize_mode() != NPM_Quanta)
+		{
+			mod_val_inputs mod_input(tap_beat, tap_second, col.get_curr_beat(), col.get_curr_second(), yoff);
+			double const quantization= col.quantization_for_time(mod_input);
+			draw_info.act= (newskin->*get_normal)(part, quantization, anim_beat);
+		}
+		else
+		{
+			draw_info.act= (newskin->*get_playerized)(part, pn, anim_beat);
+		}
+		draw_info.draw_second= draw_second;
+	}
+}
 
 void NewFieldColumn::draw_taps_internal()
 {
@@ -1019,7 +1065,6 @@ void NewFieldColumn::draw_taps_internal()
 		double head_beat;
 		double tail_beat;
 		double head_second;
-		double tail_second;
 		switch(tn.type)
 		{
 			case TapNoteType_Mine:
@@ -1064,45 +1109,28 @@ void NewFieldColumn::draw_taps_internal()
 		vector<tap_draw_info> acts(2);
 		if(part != NewSkinTapPart_Invalid)
 		{
-			head_second= tn.occurs_at_second;
-			acts[0].draw_beat= head_beat;
-			acts[0].y_offset= tapit.y_offset;
-			if(y_offset_visible(acts[0].y_offset) == 0)
-			{
-				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
-				double const quantization= quantization_for_time(mod_input);
-				m_newskin->get_tap_actor(acts[0].act, part, m_show_player_overlay_notes, tn.pn, quantization, beat);
-				acts[0].draw_second= head_second;
-			}
+			set_tap_actor_info(acts[0], *this, m_newskin,
+				&NewSkinColumn::get_tap_actor, &NewSkinColumn::get_player_tap, part,
+				tn.pn, head_beat, tn.occurs_at_second, tapit.y_offset, tap_beat,
+				tap_second, beat);
 		}
 		else
 		{
-			tail_second= tn.end_second;
 			// Put tails on the list first because they need to be under the heads.
-			acts[0].draw_beat= tail_beat;
-			acts[0].y_offset= tapit.tail_y_offset;
-			if(y_offset_visible(acts[0].y_offset) == 0)
-			{
-				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[0].y_offset);
-				double const quantization= quantization_for_time(mod_input);
-				m_newskin->get_optional_actor(acts[0].act, tail_part, m_show_player_overlay_notes, tn.pn, quantization, beat);
-				acts[0].draw_second= tail_second;
-			}
-			acts[1].draw_beat= head_beat;
-			acts[1].y_offset= tapit.y_offset;
-			if(y_offset_visible(acts[1].y_offset) == 0)
-			{
-				mod_val_inputs mod_input(tap_beat, tap_second, m_curr_beat, m_curr_second, acts[1].y_offset);
-				double const quantization= quantization_for_time(mod_input);
-				m_newskin->get_optional_actor(acts[1].act, head_part, m_show_player_overlay_notes, tn.pn, quantization, beat);
-				acts[1].draw_second= head_second;
-			}
+			set_tap_actor_info(acts[0], *this, m_newskin,
+				&NewSkinColumn::get_optional_actor,
+				&NewSkinColumn::get_player_optional_tap, tail_part, tn.pn, tail_beat,
+				tn.end_second, tapit.tail_y_offset, tap_beat, tap_second, beat);
+			set_tap_actor_info(acts[1], *this, m_newskin,
+				&NewSkinColumn::get_optional_actor,
+				&NewSkinColumn::get_player_optional_tap, head_part, tn.pn, head_beat,
+				head_second, tapit.y_offset, tap_beat, tap_second, beat);
 		}
 		for(auto&& act : acts)
 		{
 			// Tails are optional, get_optional_actor returns nullptr if the
 			// noteskin doesn't have them.
-			if(!act.act.empty())
+			if(act.act != nullptr)
 			{
 				mod_val_inputs input(act.draw_beat, act.draw_second, m_curr_beat, m_curr_second, act.y_offset);
 				double alpha= m_note_alpha.evaluate(input);
@@ -1113,13 +1141,14 @@ void NewFieldColumn::draw_taps_internal()
 				{
 					trans.pos.y+= apply_reverse_shift(act.y_offset);
 				}
-				for(auto&& real_act : act.act)
+				act.act->set_transform(trans);
+				act.act->SetDiffuseAlpha(alpha);
+				act.act->SetGlow(RageColor(1, 1, 1, glow));
+				if(m_playerize_mode == NPM_Mask)
 				{
-					real_act->set_transform(trans);
-					real_act->SetDiffuseAlpha(alpha);
-					real_act->SetGlow(RageColor(1, 1, 1, glow));
-					real_act->Draw();
+					act.act->recursive_set_mask_color(get_player_color(tn.pn));
 				}
+				act.act->Draw();
 			}
 		}
 	}
@@ -1230,6 +1259,18 @@ void NewFieldColumn::DrawPrimitives()
 		default:
 			break;
 	}
+}
+
+void NewFieldColumn::set_playerize_mode(NotePlayerizeMode mode)
+{
+	if(mode == NPM_Mask)
+	{
+		if(!m_newskin->supports_masking())
+		{
+			mode= NPM_Quanta;
+		}
+	}
+	m_playerize_mode= mode;
 }
 
 REGISTER_ACTOR_CLASS(NewField);
@@ -1349,6 +1390,15 @@ void NewField::push_columns_to_lua(lua_State* L)
 	}
 }
 
+void NewField::set_player_color(size_t pn, RageColor const& color)
+{
+	if(pn >= m_player_colors.size())
+	{
+		m_player_colors.resize(pn+1);
+	}
+	m_player_colors[pn]= color;
+}
+
 void NewField::clear_steps()
 {
 	if(m_own_note_data)
@@ -1418,6 +1468,7 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 		LuaHelpers::ReportScriptError("Error loading noteskin: " + insanity);
 		return;
 	}
+	m_player_colors= m_newskin.m_player_colors;
 	m_field_width= 0.0;
 	Lua* L= LUA->Get();
 	lua_createtable(L, m_newskin.num_columns(), 0);
@@ -1463,7 +1514,7 @@ void NewField::set_note_data(NoteData* note_data, TimingData* timing, Style cons
 		// allows columns to have different widths.
 		double halfw= (col->get_width() + col->get_padding()) * .5;
 		curr_x+= halfw;
-		m_columns[i].set_column_info(i, col, m_newskin,
+		m_columns[i].set_column_info(i, col, m_newskin, &m_player_colors,
 			m_note_data, m_timing_data, curr_x);
 		curr_x+= halfw;
 	}
@@ -1579,7 +1630,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 	GET_SET_BOOL_METHOD(holds_skewed_by_mods, m_holds_skewed_by_mods);
 	GET_SET_BOOL_METHOD(twirl_holds, m_twirl_holds);
 	GET_SET_BOOL_METHOD(use_moddable_hold_normal, m_use_moddable_hold_normal);
-	GET_SET_BOOL_METHOD(show_player_overlay_notes, m_show_player_overlay_notes);
+	GETTER_SETTER_ENUM_METHOD(NotePlayerizeMode, playerize_mode);
 	static int get_curr_beat(T* p, lua_State* L)
 	{
 		lua_pushnumber(L, p->get_curr_beat());
@@ -1703,7 +1754,7 @@ struct LunaNewFieldColumn : Luna<NewFieldColumn>
 		ADD_GET_SET_METHODS(holds_skewed_by_mods);
 		ADD_GET_SET_METHODS(twirl_holds);
 		ADD_GET_SET_METHODS(use_moddable_hold_normal);
-		ADD_GET_SET_METHODS(show_player_overlay_notes);
+		ADD_GET_SET_METHODS(playerize_mode);
 		ADD_GET_SET_METHODS(curr_beat);
 		ADD_GET_SET_METHODS(curr_second);
 		ADD_METHOD(set_pixels_visible_before);
@@ -1739,14 +1790,17 @@ struct LunaNewField : Luna<NewField>
 	GET_MEMBER(fov_mod);
 	GET_MEMBER(vanish_x_mod);
 	GET_MEMBER(vanish_y_mod);
-	static int get_vanish_type(T* p, lua_State* L)
+	GET_SET_ENUM_METHOD(vanish_type, FieldVanishType, m_vanish_type);
+	static int set_player_color(T* p, lua_State* L)
 	{
-		Enum::Push(L, p->m_vanish_type);
-		return 1;
-	}
-	static int set_vanish_type(T* p, lua_State* L)
-	{
-		p->m_vanish_type= Enum::Check<FieldVanishType>(L, 1);
+		int pn= IArg(1);
+		if(pn < 1 || pn > 32)
+		{
+			luaL_error(L, "Invalid player number.");
+		}
+		RageColor temp;
+		temp.FromStack(L, 2);
+		p->set_player_color(pn, temp);
 		COMMON_RETURN_SELF;
 	}
 	LunaNewField()
@@ -1759,6 +1813,7 @@ struct LunaNewField : Luna<NewField>
 		ADD_METHOD(get_vanish_x_mod);
 		ADD_METHOD(get_vanish_y_mod);
 		ADD_GET_SET_METHODS(vanish_type);
+		ADD_METHOD(set_player_color);
 	}
 };
 LUA_REGISTER_DERIVED_CLASS(NewField, ActorFrame);

@@ -52,6 +52,14 @@ static const char* TexCoordFlipModeNames[] = {
 XToString(TexCoordFlipMode);
 LuaXType(TexCoordFlipMode);
 
+static const char* NotePlayerizeModeNames[]= {
+	"Off",
+	"Mask",
+	"Quanta"
+};
+XToString(NotePlayerizeMode);
+LuaXType(NotePlayerizeMode);
+
 static size_t get_table_len(lua_State* L, int index, size_t max_entries,
 	string const& table_name, string& insanity_diagnosis)
 {
@@ -159,6 +167,40 @@ static void load_enum_table(lua_State* L, int index, en_type begin, en_type end,
 	}
 }
 
+RageTexture* load_noteskin_tex(std::string const& path, NewSkinLoader const* load_skin)
+{
+	RageTexture* as_tex= nullptr;
+	// Check to see if a texture is registered before trying to convert it to
+	// a full path.  This allows someone to make an AFT and name the texture
+	// of the AFT, then use that texture name in the part.
+	RageTextureID as_id(path);
+	if(TEXTUREMAN->IsTextureRegistered(as_id))
+	{
+		as_tex= TEXTUREMAN->LoadTexture(as_id);
+	}
+	else
+	{
+		RString resolved= NEWSKIN->get_path(load_skin, path);
+		if(resolved.empty())
+		{
+			as_tex= TEXTUREMAN->LoadTexture(TEXTUREMAN->GetDefaultTextureID());
+		}
+		else
+		{
+			as_tex= TEXTUREMAN->LoadTexture(resolved);
+		}
+	}
+	return as_tex;
+}
+
+void unload_texture_list(vector<RageTexture*>& tex_list)
+{
+	for(auto&& tex : tex_list)
+	{
+		TEXTUREMAN->UnloadTexture(tex);
+	}
+}
+
 bool QuantizedStateMap::load_from_lua(lua_State* L, int index, string& insanity_diagnosis)
 {
 	// Loading is atomic:  If a single error occurs during loading the data,
@@ -257,6 +299,11 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 	return true;
 }
 
+QuantizedHold::~QuantizedHold()
+{
+	unload_texture_list(m_parts);
+}
+
 bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, string& insanity_diagnosis)
 {
 	// Pop the table we're loading from off the stack when returning.
@@ -297,28 +344,7 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 		{
 			RETURN_NOT_SANE("Empty texture path is not valid.");
 		}
-		// Check to see if a texture is registered before trying to convert it to
-		// a full path.  This allows someone to make an AFT and name the texture
-		// of the AFT, then use that texture name in the part.
-		RageTextureID as_id(path);
-		RageTexture* as_tex= nullptr;
-		if(TEXTUREMAN->IsTextureRegistered(as_id))
-		{
-			as_tex= TEXTUREMAN->LoadTexture(as_id);
-		}
-		else
-		{
-			RString resolved= NEWSKIN->get_path(load_skin, path);
-			if(resolved.empty())
-			{
-				as_tex= TEXTUREMAN->LoadTexture(TEXTUREMAN->GetDefaultTextureID());
-			}
-			else
-			{
-				as_tex= TEXTUREMAN->LoadTexture(resolved);
-			}
-		}
-		temp_parts[part]= as_tex;
+		temp_parts[part]= load_noteskin_tex(path, load_skin);
 	}
 	lua_getfield(L, index, "flip");
 	m_flip= TCFM_None;
@@ -354,81 +380,87 @@ bool QuantizedHold::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	m_state_map.swap(temp_map);
+	unload_texture_list(m_parts);
 	m_parts.swap(temp_parts);
 	return true;
 }
 
-void NewSkinColumn::get_tap_actor(vector<Actor*>& acts, NewSkinTapPart type,
-	bool get_overlay, size_t pn, double quantization, double beat)
-{
-	const size_t type_index= type;
-	ASSERT_M(type < m_taps.size(), "Invalid NewSkinTapPart type.");
-	if(get_overlay && !m_player_tap_overlays.empty())
-	{
-		if(!m_player_overlay_overrides)
-		{
-			acts.push_back(m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
-		}
-		auto& tap_set= m_player_tap_overlays[pn%m_player_tap_overlays.size()];
-		acts.push_back(tap_set[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
-	}
-	else
-	{
-		acts.push_back(m_taps[type_index].get_quantized(quantization, beat, m_rotations[type_index]));
-	}
-}
-
-void NewSkinColumn::get_optional_actor(vector<Actor*>& acts,
-	NewSkinTapOptionalPart type, bool get_overlay, size_t pn,
+Actor* NewSkinColumn::get_tap_actor(size_t type,
 	double quantization, double beat)
 {
-	const size_t type_index= type;
+	ASSERT_M(type < m_taps.size(), "Invalid NewSkinTapPart type.");
+	return m_taps[type].get_quantized(quantization, beat,
+		m_rotations[type]);
+}
+
+Actor* NewSkinColumn::get_optional_actor(size_t type,
+	double quantization, double beat)
+{
 	ASSERT_M(type < m_optional_taps.size(), "Invalid NewSkinTapOptionalPart type.");
-	QuantizedTap* tap= m_optional_taps[type_index];
+	QuantizedTap* tap= m_optional_taps[type];
 	if(tap == nullptr)
 	{
-		tap= m_optional_taps[type_index % 2];
+		tap= m_optional_taps[type % 2];
 	}
 	if(tap == nullptr)
 	{
-		if(type_index % 2 == 0) // heads fallback to taps.
+		if(type % 2 == 0) // heads fallback to taps.
 		{
-			get_tap_actor(acts, NSTP_Tap, get_overlay, pn, quantization, beat);
-			return;
+			return get_tap_actor(NSTP_Tap, quantization, beat);
 		}
-		return;
+		return nullptr;
 	}
-	if(get_overlay && !m_player_tap_overlays.empty())
+	return tap->get_quantized(quantization, beat, m_rotations[type]);
+}
+
+Actor* NewSkinColumn::get_player_tap(size_t type, size_t pn, double beat)
+{
+	ASSERT_M(type < m_taps.size(), "Invalid NewSkinTapPart type.");
+	return m_taps[type].get_playerized(pn, beat, m_rotations[type]);
+}
+
+Actor* NewSkinColumn::get_player_optional_tap(size_t type, size_t pn,
+	double beat)
+{
+	ASSERT_M(type < m_optional_taps.size(), "Invalid NewSkinTapOptionalPart type.");
+	QuantizedTap* tap= m_optional_taps[type];
+	if(tap == nullptr)
 	{
-		if(!m_player_overlay_overrides)
+		tap= m_optional_taps[type % 2];
+	}
+	if(tap == nullptr)
+	{
+		if(type % 2 == 0) // heads fallback to taps.
 		{
-			acts.push_back(tap->get_quantized(quantization, beat, m_rotations[type_index]));
+			return get_player_tap(NSTP_Tap, pn, beat);
 		}
-		auto& tap_set= m_player_tap_overlays[pn%m_player_tap_overlays.size()];
-		acts.push_back(tap_set[NSTP_Tap].get_quantized(quantization, beat, m_rotations[type_index]));
+		return nullptr;
 	}
-	else
-	{
-		acts.push_back(tap->get_quantized(quantization, beat, m_rotations[type_index]));
-	}
+	return tap->get_playerized(pn, beat, m_rotations[type]);
 }
 
 void NewSkinColumn::get_hold_render_data(TapNoteSubType sub_type,
-	bool get_overlay, size_t pn, bool active, bool reverse, double quantization,
-	double beat, QuantizedHoldRenderData& data)
+	NotePlayerizeMode playerize_mode, size_t pn, bool active, bool reverse,
+	double quantization, double beat, QuantizedHoldRenderData& data)
 {
 	if(sub_type >= NUM_TapNoteSubType)
 	{
 		data.clear();
 		return;
 	}
-	if(!reverse)
+	auto& hold_set= reverse ? m_reverse_holds : m_holds;
+	auto& mask_set= reverse ? m_hold_reverse_player_masks : m_hold_player_masks;
+	if(playerize_mode != NPM_Quanta)
 	{
-		m_holds[sub_type][active].get_quantized(quantization, beat, data);
+		hold_set[sub_type][active].get_quantized(quantization, beat, data);
 	}
 	else
 	{
-		m_reverse_holds[sub_type][active].get_quantized(quantization, beat, data);
+		hold_set[sub_type][active].get_playerized(pn, beat, data);
+	}
+	if(playerize_mode == NPM_Mask && !mask_set.empty())
+	{
+		data.mask= mask_set[sub_type];
 	}
 }
 
@@ -476,6 +508,44 @@ bool NewSkinColumn::load_holds_from_lua(lua_State* L, int index,
 	return true;
 }
 
+bool NewSkinColumn::load_texs_from_lua(lua_State* L, int index,
+	std::vector<RageTexture*>& dest,
+	std::string const& texs_name,
+	NewSkinLoader const* load_skin, std::string& insanity_diagnosis)
+{
+	string sub_sanity;
+	int original_top= lua_gettop(L);
+#define RETURN_NOT_SANE(message) lua_settop(L, original_top); insanity_diagnosis= message; return false;
+	lua_getfield(L, index, texs_name.c_str());
+	if(!lua_istable(L, -1))
+	{
+		// load_texs_from_lua is only used for optional player mask textures.
+		return true;
+		//RETURN_NOT_SANE("No " + texs_name + " textures given.");
+	}
+	int texs_index= lua_gettop(L);
+	dest.resize(NUM_TapNoteSubType);
+	for(size_t part= 0; part < NUM_TapNoteSubType; ++part)
+	{
+		Enum::Push(L, static_cast<TapNoteSubType>(part));
+		lua_gettable(L, texs_index);
+		if(!lua_isstring(L, -1))
+		{
+			RETURN_NOT_SANE(ssprintf("Texture entry for layer %zu is not a string.",
+					part+1));
+		}
+		string path= lua_tostring(L, -1);
+		if(path.empty())
+		{
+			RETURN_NOT_SANE("Empty texture path is not valid.");
+		}
+		dest[part]= load_noteskin_tex(path, load_skin);
+	}
+#undef RETURN_NOT_SANE
+	lua_settop(L, original_top);
+	return true;
+}
+
 bool load_tap_set_from_lua(lua_State* L, int taps_index, vector<QuantizedTap>& tap_set, string& insanity_diagnosis)
 {
 	int original_top= lua_gettop(L);
@@ -517,6 +587,8 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 	vector<QuantizedTap*> temp_optionals(NUM_NewSkinTapOptionalPart, nullptr);
 	vector<vector<QuantizedHold> > temp_holds;
 	vector<vector<QuantizedHold> > temp_reverse_holds;
+	vector<RageTexture*> temp_hold_masks;
+	vector<RageTexture*> temp_hold_reverse_masks;
 	vector<double> temp_rotations;
 	lua_getfield(L, index, "taps");
 	if(!lua_istable(L, -1))
@@ -552,23 +624,6 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 		}
 	}
 	lua_settop(L, optional_taps_index-1);
-	lua_getfield(L, index, "player_taps");
-	int player_taps_index= lua_gettop(L);
-	// player taps are optional.
-	if(lua_istable(L, -1))
-	{
-		size_t num_players= lua_objlen(L, player_taps_index);
-		temp_player_taps.resize(num_players);
-		for(size_t pn= 0; pn < num_players; ++pn)
-		{
-			lua_rawgeti(L, player_taps_index, pn+1);
-			if(!load_tap_set_from_lua(L, lua_gettop(L), temp_player_taps[pn], sub_sanity))
-			{
-				RETURN_NOT_SANE(ssprintf("Problem in taps for player %zu: %s", pn, sub_sanity.c_str()));
-			}
-		}
-	}
-	lua_settop(L, player_taps_index-1);
 	if(!load_holds_from_lua(L, index, temp_holds, "holds", load_skin,
 			insanity_diagnosis))
 	{
@@ -576,6 +631,14 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 	}
 	if(!load_holds_from_lua(L, index, temp_reverse_holds, "reverse_holds", load_skin,
 			insanity_diagnosis))
+	{
+		RETURN_NOT_SANE(insanity_diagnosis);
+	}
+	if(!load_texs_from_lua(L, index, temp_hold_masks, "hold_masks", load_skin, insanity_diagnosis))
+	{
+		RETURN_NOT_SANE(insanity_diagnosis);
+	}
+	if(!load_texs_from_lua(L, index, temp_hold_reverse_masks, "hold_reverse_masks", load_skin, insanity_diagnosis))
 	{
 		RETURN_NOT_SANE(insanity_diagnosis);
 	}
@@ -587,11 +650,14 @@ bool NewSkinColumn::load_from_lua(lua_State* L, int index, NewSkinLoader const* 
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	m_taps.swap(temp_taps);
-	m_player_tap_overlays.swap(temp_player_taps);
 	clear_optionals();
 	m_optional_taps.swap(temp_optionals);
 	m_holds.swap(temp_holds);
 	m_reverse_holds.swap(temp_reverse_holds);
+	unload_texture_list(m_hold_player_masks);
+	unload_texture_list(m_hold_reverse_player_masks);
+	m_hold_player_masks.swap(temp_hold_masks);
+	m_hold_reverse_player_masks.swap(temp_hold_reverse_masks);
 	m_rotations.swap(temp_rotations);
 	return true;
 }
@@ -685,14 +751,6 @@ bool NewSkinData::load_taps_from_lua(lua_State* L, int index, size_t columns, Ne
 	return true;
 }
 
-void NewSkinData::set_player_overlay_overrides(bool over)
-{
-	for(auto&& col : m_columns)
-	{
-		col.m_player_overlay_overrides= over;
-	}
-}
-
 bool NewSkinLoader::load_from_file(std::string const& path)
 {
 	if(!FILEMAN->IsAFile(path))
@@ -746,6 +804,7 @@ bool NewSkinLoader::load_from_lua(lua_State* L, int index, string const& name,
 	{
 		RETURN_NOT_SANE("Noteskin data is not a table.");
 	}
+	vector<RageColor> temp_player_colors;
 	unordered_set<string> temp_supported_buttons;
 	lua_getfield(L, index, "buttons");
 	// If there is no buttons table, it's not an error because a noteskin that
@@ -802,16 +861,29 @@ bool NewSkinLoader::load_from_lua(lua_State* L, int index, string const& name,
 		m_fallback_skin_name.clear();
 	}
 	lua_pop(L, 1);
+	// The player_colors are optional.
+	lua_getfield(L, index, "player_colors");
+	int colors_index= lua_gettop(L);
+	if(lua_istable(L, colors_index))
+	{
+		size_t num_colors= lua_objlen(L, colors_index);
+		temp_player_colors.resize(num_colors);
+		for(size_t c= 0; c < num_colors; ++c)
+		{
+			lua_rawgeti(L, colors_index, c+1);
+			temp_player_colors[c].FromStack(L, lua_gettop(L));
+		}
+	}
+	lua_pop(L, 1);
 	lua_getfield(L, index, "supports_all_buttons");
 	m_supports_all_buttons= lua_toboolean(L, -1);
-	lua_getfield(L, index, "player_overlay_overrides");
-	m_player_overlay_overrides= lua_toboolean(L, -1);
 	lua_settop(L, original_top);
 #undef RETURN_NOT_SANE
 	m_skin_name= name;
 	m_load_path= path;
 	m_below_loaders.swap(temp_below_loaders);
 	m_above_loaders.swap(temp_above_loaders);
+	m_player_colors.swap(temp_player_colors);
 	m_supported_buttons.swap(temp_supported_buttons);
 	return true;
 }
@@ -1012,7 +1084,6 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 	{
 		RETURN_NOT_SANE("Invalid data from loader: " + sub_sanity);
 	}
-	dest.set_player_overlay_overrides(m_player_overlay_overrides);
 	if(!load_layer_set_into_data(L, button_list_index, stype_index, button_list.size(), m_below_loaders,
 			dest.m_layers_below_notes, sub_sanity))
 	{
@@ -1026,5 +1097,6 @@ bool NewSkinLoader::load_into_data(StepsType stype,
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	LUA->Release(L);
+	dest.m_player_colors= m_player_colors;
 	return true;
 }

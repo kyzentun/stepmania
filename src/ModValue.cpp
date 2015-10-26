@@ -1133,7 +1133,7 @@ double ModifiableValue::evaluate(mod_val_inputs const& input)
 	{
 		for(auto&& mod : m_mods)
 		{
-			sum+= mod.second->evaluate(input);
+			sum+= mod->evaluate(input);
 		}
 	}
 	if(!m_active_managed_mods.empty())
@@ -1156,6 +1156,18 @@ ModFunction* ModifiableValue::add_mod_internal(lua_State* L, int index)
 	return new_mod;
 }
 
+std::list<ModFunction*>::iterator ModifiableValue::find_mod(std::string const& name)
+{
+	for(auto iter= m_mods.begin(); iter != m_mods.end(); ++iter)
+	{
+		if((*iter)->get_name() == name)
+		{
+			return iter;
+		}
+	}
+	return m_mods.end();
+}
+
 ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 {
 	ModFunction* new_mod= add_mod_internal(L, index);
@@ -1164,17 +1176,17 @@ ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 		return nullptr;
 	}
 	ModFunction* ret= nullptr;
-	auto mod= m_mods.find(new_mod->get_name());
-	if(mod == m_mods.end())
+	auto insert_point= find_mod(new_mod->get_name());
+	if(insert_point == m_mods.end())
 	{
-		m_mods.insert(make_pair(new_mod->get_name(), new_mod));
+		m_mods.push_back(new_mod);
 		ret= new_mod;
 	}
 	else
 	{
-		(*(mod->second)) = (*new_mod);
+		(*(*insert_point)) = (*new_mod);
 		delete new_mod;
-		ret= mod->second;
+		ret= (*insert_point);
 	}
 	m_manager->add_to_per_frame_update(ret);
 	return ret;
@@ -1182,20 +1194,20 @@ ModFunction* ModifiableValue::add_mod(lua_State* L, int index)
 
 ModFunction* ModifiableValue::get_mod(std::string const& name)
 {
-	auto mod= m_mods.find(name);
+	auto mod= find_mod(name);
 	if(mod != m_mods.end())
 	{
-		return mod->second;
+		return *mod;
 	}
 	return nullptr;
 }
 
 void ModifiableValue::remove_mod(std::string const& name)
 {
-	auto mod= m_mods.find(name);
+	auto mod= find_mod(name);
 	if(mod != m_mods.end())
 	{
-		delete mod->second;
+		delete *mod;
 		m_mods.erase(mod);
 	}
 }
@@ -1204,7 +1216,7 @@ void ModifiableValue::clear_mods()
 {
 	for(auto&& mod : m_mods)
 	{
-		delete mod.second;
+		delete mod;
 	}
 	m_mods.clear();
 }

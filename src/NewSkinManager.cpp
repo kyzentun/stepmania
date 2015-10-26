@@ -134,6 +134,12 @@ std::string NewSkinManager::get_path(
 	{
 		return "";
 	}
+	// Check to see if the filename is already a valid path.
+	RString resolved= file;
+	if(ActorUtil::ResolvePath(resolved, skin->get_name(), true))
+	{
+		return resolved;
+	}
 	// Fallback loop cases are detected and silently ignored by storing each
 	// fallback in used_fallbacks.  This allows skins to mutually fall back on
 	// each other if someone really needs to do that.
@@ -143,12 +149,11 @@ std::string NewSkinManager::get_path(
 	std::string found_path;
 	while(!next_path.empty())
 	{
-		RString resolved= next_path + file;
+		resolved= next_path + file;
 		next_path.clear();
 		if(ActorUtil::ResolvePath(resolved, skin->get_name(), true))
 		{
-			found_path= resolved;
-			break;
+			return resolved;
 		}
 		else if(!next_fallback.empty() &&
 			used_fallbacks.find(next_fallback) == used_fallbacks.end())
@@ -163,7 +168,7 @@ std::string NewSkinManager::get_path(
 			}
 		}
 	}
-	return found_path;
+	return "";
 }
 
 bool NewSkinManager::named_skin_exists(std::string const& skin_name)

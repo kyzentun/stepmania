@@ -230,6 +230,7 @@ public:
 		std::array<RageColor, NUM_DIFFUSE_COLORS> diffuse;
 		/** @brief The glow color for this TweenState. */
 		RageColor	glow;
+		RageColor mask_color;
 		/** @brief A magical value that nobody really knows the use for. ;) */
 		float		aux;
 	};
@@ -480,6 +481,10 @@ public:
 	void SetGlow( RageColor c )			{ DestTweenState().glow = c; };
 	void SetGlowAlpha(float c)			{ DestTweenState().glow.a = c; };
 	RageColor GetGlow() const			{ return DestTweenState().glow; };
+
+	void SetMaskColor(RageColor c) { DestTweenState().mask_color= c; }
+	RageColor GetMaskColor() const { return DestTweenState().mask_color; }
+	virtual void recursive_set_mask_color(RageColor c) { SetMaskColor(c); }
 
 	void SetAux( float f )				{ DestTweenState().aux = f; }
 	float GetAux() const				{ return m_current.aux; }

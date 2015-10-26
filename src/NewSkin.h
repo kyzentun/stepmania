@@ -68,6 +68,21 @@ enum NewSkinHoldPart
 const RString& NewSkinHoldPartToString(NewSkinHoldPart nsp);
 LuaDeclareType(NewSkinHoldPart);
 
+// There are three modes for playerizing notes for routine mode.
+// NPM_Off is for not playerizing at all.
+// NPM_Mask uses the color mask in the noteskin.
+// NPM_Quanta uses the quanta in the noteskin as per-player notes.
+enum NotePlayerizeMode
+{
+	NPM_Off,
+	NPM_Mask,
+	NPM_Quanta,
+	NUM_NotePlayerizeMode,
+	NotePlayerizeMode_Invalid
+};
+const RString& NotePlayerizeModeToString(NotePlayerizeMode npm);
+LuaDeclareType(NotePlayerizeMode);
+
 struct NewSkinLoader;
 
 struct QuantizedStateMap
@@ -111,13 +126,23 @@ struct QuantizedStateMap
 		}
 		return m_quanta.back();
 	}
-	size_t calc_state(double quantization, double beat, bool vivid) const
+	size_t calc_frame(QuantizedStates const& quantum, double quantization,
+		double beat, bool vivid) const
 	{
-		QuantizedStates const& quantum= calc_quantization(quantization);
 		size_t frame_index= static_cast<size_t>(
 			floor(((vivid ? quantization : 0.0) + beat) * quantum.states.size()))
 			% quantum.states.size();
 		return quantum.states[frame_index];
+	}
+	size_t calc_state(double quantization, double beat, bool vivid) const
+	{
+		QuantizedStates const& quantum= calc_quantization(quantization);
+		return calc_frame(quantum, quantization, beat, vivid);
+	}
+	size_t calc_player_state(size_t pn, double beat, bool vivid) const
+	{
+		QuantizedStates const& quantum= m_quanta[pn%m_quanta.size()];
+		return calc_frame(quantum, 0.0, beat, vivid);
 	}
 	bool load_from_lua(lua_State* L, int index, std::string& insanity_diagnosis);
 	void swap(QuantizedStateMap& other)
@@ -140,15 +165,24 @@ private:
 
 struct QuantizedTap
 {
-	Actor* get_quantized(double quantization, double beat, double rotation)
+	Actor* get_common(size_t state, double rotation)
 	{
-		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
 		m_actor->SetState(state);
 		m_actor->SetBaseRotationZ(rotation);
 		// Return the frame and not the actor because the notefield is going to
 		// apply mod transforms to it.  Returning the actor would make the mod
 		// transform stomp on the rotation the noteskin supplies.
 		return &m_frame;
+	}
+	Actor* get_quantized(double quantization, double beat, double rotation)
+	{
+		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
+		return get_common(state, rotation);
+	}
+	Actor* get_playerized(size_t pn, double beat, double rotation)
+	{
+		const size_t state= m_state_map.calc_player_state(pn, beat, m_vivid);
+		return get_common(state, rotation);
 	}
 	bool load_from_lua(lua_State* L, int index, std::string& insanity_diagnosis);
 	bool m_vivid;
@@ -183,12 +217,14 @@ struct QuantizedHoldRenderData
 {
 	QuantizedHoldRenderData() { clear(); }
 	std::vector<RageTexture*> parts;
+	RageTexture* mask;
 	RectF const* rect;
 	TexCoordFlipMode flip;
 	hold_part_lengths part_lengths;
 	void clear()
 	{
 		parts.clear();
+		mask= nullptr;
 		rect= nullptr;
 	}
 };
@@ -201,9 +237,9 @@ struct QuantizedHold
 	TexCoordFlipMode m_flip;
 	bool m_vivid;
 	hold_part_lengths m_part_lengths;
-	void get_quantized(double quantization, double beat, QuantizedHoldRenderData& ret)
+	~QuantizedHold();
+	void get_common(size_t state, QuantizedHoldRenderData& ret)
 	{
-		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
 		for(size_t i= 0; i < m_parts.size(); ++i)
 		{
 			ret.parts.push_back(m_parts[i]);
@@ -215,25 +251,41 @@ struct QuantizedHold
 		ret.flip= m_flip;
 		ret.part_lengths= m_part_lengths;
 	}
+	void get_quantized(double quantization, double beat, QuantizedHoldRenderData& ret)
+	{
+		const size_t state= m_state_map.calc_state(quantization, beat, m_vivid);
+		get_common(state, ret);
+	}
+	void get_playerized(size_t pn, double beat, QuantizedHoldRenderData& ret)
+	{
+		const size_t state= m_state_map.calc_player_state(pn, beat, m_vivid);
+		get_common(state, ret);
+	}
 	bool load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 };
 
 struct NewSkinColumn
 {
-	// get_tap_actor, get_optional_actor, and get_hold_render_data take a
-	// size_t player number to allow for more than 2 players.
-	void get_tap_actor(std::vector<Actor*>& acts, NewSkinTapPart type,
-		bool get_overlay, size_t pn, double quantization, double beat);
-	void get_optional_actor(std::vector<Actor*>& acts, NewSkinTapOptionalPart type,
-		bool get_overlay, size_t pn, double quantization, double beat);
-	void get_hold_render_data(TapNoteSubType sub_type, bool get_overlay,
-		size_t pn, bool active, bool reverse, double quantization, double beat,
-		QuantizedHoldRenderData& data);
+	Actor* get_tap_actor(size_t type, double quantization, double beat);
+	Actor* get_optional_actor(size_t type, double quantization, double beat);
+	Actor* get_player_tap(size_t type, size_t pn, double beat);
+	Actor* get_player_optional_tap(size_t type, size_t pn, double beat);
+	void get_hold_render_data(TapNoteSubType sub_type,
+		NotePlayerizeMode playerize_mode, size_t pn, bool active, bool reverse,
+		double quantization, double beat, QuantizedHoldRenderData& data);
 	double get_width() { return m_width; }
 	double get_padding() { return m_padding; }
+	bool supports_masking()
+	{
+		return !(m_hold_player_masks.empty() || m_hold_reverse_player_masks.empty());
+	}
 	bool load_holds_from_lua(lua_State* L, int index,
 		std::vector<std::vector<QuantizedHold> >& holder,
 		std::string const& holds_name,
+		NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
+	bool load_texs_from_lua(lua_State* L, int index,
+		std::vector<RageTexture*>& dest,
+		std::string const& texs_name,
 		NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 	bool load_from_lua(lua_State* L, int index, NewSkinLoader const* load_skin,
 		std::string& insanity_diagnosis);
@@ -276,30 +328,25 @@ struct NewSkinColumn
 		}
 	}
 	NewSkinColumn()
-		:m_player_overlay_overrides(false), m_optional_taps(NUM_NewSkinTapOptionalPart, nullptr)
+		:m_optional_taps(NUM_NewSkinTapOptionalPart, nullptr)
 	{}
 	~NewSkinColumn()
 	{
 		clear_optionals();
 	}
-	bool m_player_overlay_overrides;
 private:
 	// m_taps is indexed by NewSkinTapPart.
 	std::vector<QuantizedTap> m_taps;
 	// m_optional_taps is indexed by NewSkinTapOptionalPart.
 	// If an entry is null, the skin doesn't use that part.
 	std::vector<QuantizedTap*> m_optional_taps;
-	// Dimensions of m_player_tap_overlays:
-	// player number, NewSkinTapPart
-	// m_player_tap_overlays is optional.
-	// pn % overlays.size() is used when indexing, so the players wrap.
-	std::vector<std::vector<QuantizedTap> > m_player_tap_overlays;
 	// Dimensions of m_holds:
 	// note subtype, active/inactive.
 	std::vector<std::vector<QuantizedHold> > m_holds;
 	std::vector<std::vector<QuantizedHold> > m_reverse_holds;
-	std::vector<std::vector<QuantizedHold> > m_hold_overlays;
-	std::vector<std::vector<QuantizedHold> > m_reverse_hold_overlays;
+	// m_hold_player_masks is indexed by note subtype.
+	std::vector<RageTexture*> m_hold_player_masks;
+	std::vector<RageTexture*> m_hold_reverse_player_masks;
 	// m_rotation_factors stores the amount to rotate each NSTP.
 	// So the noteskin can set taps to rotate 90 degrees in this column and
 	// mines to rotate 0, and taps will be rotated and mines won't.
@@ -331,12 +378,12 @@ struct NewSkinData
 	size_t num_columns() { return m_columns.size(); }
 	bool load_taps_from_lua(lua_State* L, int index, size_t columns, NewSkinLoader const* load_skin, std::string& insanity_diagnosis);
 	bool loaded_successfully() const { return m_loaded; }
-	void set_player_overlay_overrides(bool over);
 
 	// The layers are public so that the NewFieldColumns can go through and
 	// take ownership of the actors after loading.
 	std::vector<NewSkinLayer> m_layers_below_notes;
 	std::vector<NewSkinLayer> m_layers_above_notes;
+	std::vector<RageColor> m_player_colors;
 private:
 	std::vector<NewSkinColumn> m_columns;
 	bool m_loaded;
@@ -346,7 +393,7 @@ struct NewSkinLoader
 {
 	static const size_t max_layers= 16;
 	NewSkinLoader()
-		:m_supports_all_buttons(false), m_player_overlay_overrides(false)
+		:m_supports_all_buttons(false)
 	{}
 	std::string const& get_name() const
 	{
@@ -378,9 +425,9 @@ private:
 	std::string m_notes_loader;
 	std::vector<std::string> m_below_loaders;
 	std::vector<std::string> m_above_loaders;
+	std::vector<RageColor> m_player_colors;
 	std::unordered_set<std::string> m_supported_buttons;
 	bool m_supports_all_buttons;
-	bool m_player_overlay_overrides;
 };
 
 #endif

@@ -87,6 +87,8 @@ public:
 	void SetSpecularLightColor( RageColor c ) { m_specularColor = c; }
 	void SetLightDirection( RageVector3 vec ) { m_lightDirection = vec; }
 
+	virtual void recursive_set_mask_color(RageColor c);
+
 	virtual void SetPropagateCommands( bool b );
 
 	/** @brief Amount of time until all tweens (and all children's tweens) have stopped: */

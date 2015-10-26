@@ -454,6 +454,7 @@ struct ModifiableValue
 		m_timing= timing;
 	}
 	double evaluate(mod_val_inputs const& input);
+	std::list<ModFunction*>::iterator find_mod(std::string const& name);
 	ModFunction* add_mod(lua_State* L, int index);
 	ModFunction* get_mod(std::string const& name);
 	void remove_mod(std::string const& name);
@@ -474,7 +475,7 @@ private:
 
 	ModManager* m_manager;
 	TimingData const* m_timing;
-	std::unordered_map<std::string, ModFunction*> m_mods;
+	std::list<ModFunction*> m_mods;
 	std::unordered_map<std::string, ModFunction*> m_managed_mods;
 	std::unordered_set<ModFunction*> m_active_managed_mods;
 };

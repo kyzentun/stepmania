@@ -800,7 +800,6 @@ void Player::Load()
 	{
 		m_pNoteField->SetY( fNoteFieldMiddle );
 		m_pNoteField->Load( &m_NoteData, iDrawDistanceAfterTargetsPixels, iDrawDistanceBeforeTargetsPixels );
-		m_new_field->SetY(GRAY_ARROWS_Y_STANDARD - fNoteFieldMiddle);
 		m_new_field->set_note_data(&m_NoteData, m_Timing, GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber));
 	}
 
@@ -1623,16 +1622,16 @@ void Player::DrawPrimitives()
 	// TODO: Remove use of PlayerNumber.
 	PlayerNumber pn = m_pPlayerState->m_PlayerNumber;
 
+	// May have both players in doubles (for battle play); only draw primary player.
+	if( GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_StyleType == StyleType_OnePlayerTwoSides  &&
+		pn != GAMESTATE->GetMasterPlayerNumber() )
+		return;
+
 	if(m_new_field != nullptr)
 	{
 		SongPosition const& disp_pos= m_pPlayerState->GetDisplayedPosition();
 		m_new_field->update_displayed_time(disp_pos.m_fSongBeatVisible, disp_pos.m_fMusicSecondsVisible);
 	}
-
-	// May have both players in doubles (for battle play); only draw primary player.
-	if( GAMESTATE->GetCurrentStyle(GetPlayerState()->m_PlayerNumber)->m_StyleType == StyleType_OnePlayerTwoSides  &&
-		pn != GAMESTATE->GetMasterPlayerNumber() )
-		return;
 
 	bool draw_notefield= m_pNoteField && !IsOniDead();
 

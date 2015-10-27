@@ -569,7 +569,42 @@ void Profile::get_preferred_noteskin(StepsType stype, RString& skin) const
 	auto entry= m_preferred_noteskins.find(stype);
 	if(entry == m_preferred_noteskins.end())
 	{
-		skin= NEWSKIN->get_first_skin_name_for_stepstype(stype);
+		// Try to find the skin that they use the most and use it.
+		// Go through m_preferred_noteskins, find the ones that support stype,
+		// and sort them by how many times they occur in m_preferred_noteskins.
+		// Use the one that is already used the most.
+		std::map<RString, int> skin_counts;
+		for(auto&& pref_skin : m_preferred_noteskins)
+		{
+			auto entry= skin_counts.find(pref_skin.second);
+			if(entry != skin_counts.end())
+			{
+				++(entry->second);
+			}
+			else
+			{
+				if(NEWSKIN->skin_supports_stepstype(pref_skin.second, stype))
+				{
+					skin_counts[pref_skin.second]= 1;
+				}
+			}
+		}
+		if(skin_counts.empty())
+		{
+			skin= NEWSKIN->get_first_skin_name_for_stepstype(stype);
+		}
+		else
+		{
+			int highest_count= 0;
+			for(auto&& count : skin_counts)
+			{
+				if(count.second > highest_count)
+				{
+					highest_count= count.second;
+					skin= count.first;
+				}
+			}
+		}
 	}
 	else
 	{

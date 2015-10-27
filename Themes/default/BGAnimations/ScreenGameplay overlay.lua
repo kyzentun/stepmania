@@ -1,4 +1,5 @@
 local t = Def.ActorFrame {};
+t[#t+1]= use_newfield_actor(144)
 local function UpdateTime(self)
 	local c = self:GetChildren();
 	for pn in ivalues(PlayerNumber) do

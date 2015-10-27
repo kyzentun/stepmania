@@ -162,6 +162,10 @@ function use_newfield_on_gameplay(revoff)
 	end
 end
 
+function use_newfield_actor(revoff)
+	return Def.Actor{OnCommand= function(self) use_newfield_on_gameplay(revoff) end}
+end
+
 function newskin_option_row()
 	local pn= GAMESTATE:GetMasterPlayerNumber()
 	local steps= GAMESTATE:GetCurrentSteps(pn)

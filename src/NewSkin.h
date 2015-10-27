@@ -410,7 +410,7 @@ struct NewSkinLoader
 	bool load_from_file(std::string const& path);
 	bool load_from_lua(lua_State* L, int index, std::string const& name,
 		std::string const& path, std::string& insanity_diagnosis);
-	bool supports_needed_buttons(StepsType stype);
+	bool supports_needed_buttons(StepsType stype) const;
 	bool push_loader_function(lua_State* L, std::string const& loader);
 	bool load_layer_set_into_data(lua_State* L, int button_list_index,
 		int stype_index,

@@ -63,3 +63,4 @@ columns table.
 
 
 # Making a noteskin for the NewField
+Read the comments in NewSkins/default.

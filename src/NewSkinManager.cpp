@@ -115,6 +115,19 @@ std::vector<StepsType> const& NewSkinManager::get_supported_stepstypes()
 	return m_supported_types;
 }
 
+bool NewSkinManager::skin_supports_stepstype(std::string const& skin, StepsType type)
+{
+	NewSkinLoader const* loader= get_loader_for_skin(skin);
+	// This does not report an error when the skin is not found because it is
+	// used by the profile to pick a skin to use, and the profile might have the
+	// names of unknown skins in it.
+	if(loader == nullptr)
+	{
+		return false;
+	}
+	return loader->supports_needed_buttons(type);
+}
+
 NewSkinLoader const* NewSkinManager::get_loader_for_skin(std::string const& skin_name)
 {
 	for(auto&& skin : m_skins)

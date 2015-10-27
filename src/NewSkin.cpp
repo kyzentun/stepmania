@@ -973,7 +973,7 @@ static vector<vector<string> > button_lists = {
 	{"DownLeftFoot", "UpLeftFoot", "UpLeftFist", "DownLeftFist", "DownRightFist", "UpRightFist", "UpRightFoot", "DownRightFoot"}
 };
 
-bool NewSkinLoader::supports_needed_buttons(StepsType stype)
+bool NewSkinLoader::supports_needed_buttons(StepsType stype) const
 {
 	if(m_supports_all_buttons)
 	{

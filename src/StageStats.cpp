@@ -176,6 +176,7 @@ void StageStats::FinalizeScores( bool bSummary )
 	{
 		case PLAY_MODE_BATTLE:
 		case PLAY_MODE_RAVE:
+			LOG->Trace("Score debug: FinalizeScores: Not saving scores because current PlayMode is battle or rave.");
 			return; // don't save scores in battle
 		default: break;
 	}
@@ -191,7 +192,10 @@ void StageStats::FinalizeScores( bool bSummary )
 
 	// don't save scores if the player chose not to
 	if( !GAMESTATE->m_SongOptions.GetCurrent().m_bSaveScore )
+	{
+		LOG->Trace("Score debug: FinalizeScores: SongOptions SaveScore is false.");
 		return;
+	}
 
 	LOG->Trace( "saving stats and high scores" );
 
@@ -220,17 +224,26 @@ void StageStats::FinalizeScores( bool bSummary )
 
 		// Don't save DQ'd scores
 		if( hs.GetDisqualified() )
+		{
+			LOG->Trace("Score debug: FinalizeScores: Skipping high score for song %s steps %s because it was disqualified.", pSong->GetDisplayFullTitle().c_str(), pSteps->GetFilename().c_str());
 			continue;
+		}
 
 		// Don't save autoplay scores
 		if( m_bUsedAutoplay )
+		{
+			LOG->Trace("Score debug: FinalizeScores: Skipping high score for song %s steps %s because it was autoplay.", pSong->GetDisplayFullTitle().c_str(), pSteps->GetFilename().c_str());
 			continue;
+		}
 
 		if( bSummary )
 		{
 			// don't save scores if any stage was failed
-			if( m_player[p].m_bFailed ) 
+			if( m_player[p].m_bFailed )
+			{
+				LOG->Trace("Score debug: FinalizeScores: Skipping high score for song %s steps %s because on summary and player failed.", pSong->GetDisplayFullTitle().c_str(), pSteps->GetFilename().c_str());
 				continue;
+			}
 
 			int iAverageMeter = GetAverageMeter(p);
 			m_player[p].m_rc = AverageMeterToRankingCategory( iAverageMeter );

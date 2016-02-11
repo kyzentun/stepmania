@@ -100,6 +100,7 @@ ProfileManager::~ProfileManager()
 
 void ProfileManager::Init()
 {
+	LOG->Trace("Score debug: ProfileManager::Init called, reloading machine profile and local profiles.");
 	FOREACH_PlayerNumber( p )
 	{
 		m_bWasLoadedFromMemoryCard[p] = false;
@@ -638,6 +639,7 @@ bool ProfileManager::DeleteLocalProfile( RString sProfileID )
 
 void ProfileManager::SaveMachineProfile() const
 {
+	LOG->Trace("Score debug: ProfileManager::SaveMachineProfile");
 	// If the machine name has changed, make sure we use the new name.
 	// It's important that this name be applied before the Player profiles 
 	// are saved, so that the Player's profiles show the right machine name.
@@ -648,6 +650,7 @@ void ProfileManager::SaveMachineProfile() const
 
 void ProfileManager::LoadMachineProfile()
 {
+	LOG->Trace("Score debug: ProfileManager::LoadMachineProfile");
 	ProfileLoadResult lr = m_pMachineProfile->LoadAllFromDir(MACHINE_PROFILE_DIR, false);
 	if( lr == ProfileLoadResult_FailedNoProfile )
 	{
@@ -865,7 +868,18 @@ void ProfileManager::AddStepsScore( const Song* pSong, const Steps* pSteps, Play
 	{
 		// don't leave machine high scores for edits loaded from the player's card
 		if( !pSteps->IsAPlayerEdit() )
+		{
 			GetMachineProfile()->AddStepsHighScore( pSong, pSteps, hs, iMachineIndexOut );
+		}
+		else
+		{
+			LOG->Trace("Score debug: ProfileManager::AddStepsHighScore: Not saving score for steps %s because the chart is a player edit.", pSteps->GetFilename().c_str());
+		}
+	}
+	else
+	{
+		float pref_min= PREFSMAN->m_fMinPercentageForMachineSongHighScore;
+		LOG->Trace("Score debug: ProfileManager::AddStepsHighScore: Not saving score for steps %s because the score (%f) is below MinPercentageForMachineCourseHighScore (%f) or because the grade is Grade_Failed.", pSteps->GetFilename().c_str(), hs.GetPercentDP(), pref_min);
 	}
 
 	/*

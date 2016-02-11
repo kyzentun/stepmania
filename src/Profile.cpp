@@ -1843,7 +1843,10 @@ XNode* Profile::SaveSongScoresCreateNode() const
 
 		// skip songs that have never been played
 		if( pProfile->GetSongNumTimesPlayed(songID) == 0 )
+		{
+			LOG->Trace("Score debug: SaveSongScoresCreateNode: Skipping song %s because it has been played 0 times.", songID.ToString().c_str());
 			continue;
+		}
 
 		XNode* pSongNode = pNode->AppendChild( songID.CreateNode() );
 
@@ -1860,7 +1863,10 @@ XNode* Profile::SaveSongScoresCreateNode() const
 
 			// skip steps that have never been played
 			if( hsl.GetNumTimesPlayed() == 0 )
+			{
+				LOG->Trace("Score debug: SaveSongScoresCreateNode: Skipping steps %s because the high score list has 0 times played.", stepsID.ToString().c_str());
 				continue;
+			}
 
 			XNode* pStepsNode = pSongNode->AppendChild( stepsID.CreateNode() );
 
@@ -1880,7 +1886,10 @@ void Profile::LoadSongScoresFromNode( const XNode* pSongScores )
 	FOREACH_CONST_Child( pSongScores, pSong )
 	{
 		if( pSong->GetName() != "Song" )
+		{
+			LOG->Trace("Score debug: LoadSongScoresFromNode: Ignoring entry %s in song scores because it doesn't look like a song entry.", pSong->GetName().c_str());
 			continue;
+		}
 
 		SongID songID;
 		songID.LoadFromNode( pSong );
@@ -1892,7 +1901,10 @@ void Profile::LoadSongScoresFromNode( const XNode* pSongScores )
 		FOREACH_CONST_Child( pSong, pSteps )
 		{
 			if( pSteps->GetName() != "Steps" )
+			{
+				LOG->Trace("Score debug: LoadSongScoresFromNode: Ignoring entry %s in step scores because it doesn't look like a steps entry.", pSteps->GetName().c_str());
 				continue;
+			}
 
 			StepsID stepsID;
 			stepsID.LoadFromNode( pSteps );

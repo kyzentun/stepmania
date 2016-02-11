@@ -840,7 +840,7 @@ void GameState::FinishStage()
 	// now; all this code does differently is save machine profile as well. -aj
 	if( IsEventMode() )
 	{
-		const int iSaveProfileEvery = 3;
+		const int iSaveProfileEvery = 1;
 		if( iOldStageIndex/iSaveProfileEvery < m_iCurrentStageIndex/iSaveProfileEvery )
 		{
 			LOG->Trace( "Played %i stages; saving profiles ...", iSaveProfileEvery );

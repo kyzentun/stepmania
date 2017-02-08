@@ -243,18 +243,35 @@ void NoteField::ensure_note_displays_have_skin()
 
 	if(sNoteSkinLower.empty())
 	{
+		LOG->Trace("NoteField::ensure_note_displays_have_skin: Current noteskin is blank, checking preferred PlayerOptions.");
 		sNoteSkinLower = m_pPlayerState->m_PlayerOptions.GetPreferred().m_sNoteSkin;
 
 		if(sNoteSkinLower.empty())
 		{
+			LOG->Trace("NoteField::ensure_note_displays_have_skin: Preferred noteskin is blank, setting default.");
 			sNoteSkinLower = "default";
 		}
-		m_NoteDisplays.insert(pair<RString, NoteDisplayCols *> (sNoteSkinLower, badIdea));
+		// Old: m_NoteDisplays.insert
+		// m_NoteDisplays.insert(pair<RString, NoteDisplayCols *> (sNoteSkinLower, badIdea));
+		// Inserting seems like the wrong approach.  CacheNoteSkin should load it right? -Kyz
+		CacheNoteSkin(sNoteSkinLower);
 	}
 
 	sNoteSkinLower.MakeLower();
 	map<RString, NoteDisplayCols *>::iterator it = m_NoteDisplays.find( sNoteSkinLower );
-	ASSERT_M( it != m_NoteDisplays.end(), ssprintf("iterator != m_NoteDisplays.end() [sNoteSkinLower = %s]",sNoteSkinLower.c_str()) );
+	if(it == m_NoteDisplays.end())
+	{
+		// Cache the noteskin to prevent a crash and dump info to error log. -Kyz
+		LOG->Warn("Noteskin %s was not cached during notefield startup.", sNoteSkinLower.c_str());
+		vector<RString> skin_names;
+		for(map<RString, NoteDisplayCols *>::iterator display_entry= m_NoteDisplays.begin(); display_entry != m_NoteDisplays.end(); ++display_entry)
+		{
+			skin_names.push_back(display_entry->first);
+		}
+		RString joined_names= join(", ", skin_names);
+		LOG->Warn("List of loaded noteskins:\n%s", joined_names.c_str());
+		CacheNoteSkin(sNoteSkinLower);
+	}
 	memset( m_pDisplays, 0, sizeof(m_pDisplays) );
 	FOREACH_EnabledPlayer( pn )
 	{

@@ -71,6 +71,8 @@
 #include "ActorUtil.h"
 #include "ver.h"
 
+#include "NotesLoaderBMS.h"
+
 #if defined(WIN32)
 #include <windows.h>
 #endif
@@ -1215,6 +1217,7 @@ int sm_main(int argc, char* argv[])
 	GameLoop::RunGameLoop();
 
 	PREFSMAN->SavePrefsToDisk();
+	dump_bms_tag_debug_info();
 
 	ShutdownGame();
 

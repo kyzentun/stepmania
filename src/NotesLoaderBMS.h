@@ -10,6 +10,7 @@ namespace BMSLoader
 	bool LoadFromDir( const RString &sDir, Song &out );
 	bool LoadNoteDataFromSimfile( const RString & cachePath, Steps &out );
 }
+void dump_bms_tag_debug_info();
 
 #endif
 

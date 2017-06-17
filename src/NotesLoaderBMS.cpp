@@ -55,40 +55,90 @@
  * 	beat-double uses 21-26.
 */
 
-// Find the largest common substring at the start of both strings.
-static RString FindLargestInitialSubstring( const RString &string1, const RString &string2 )
+struct tag_debug_info
 {
-	// First see if the whole first string matches an appropriately-sized
-	// substring of the second, then keep chopping off the last character of
-	// each until they match.
-	unsigned i;
-	for( i = 0; i < string1.size() && i < string2.size(); ++i )
-		if( string1[i] != string2[i] )
-			break;
+	Difficulty diff;
+	bool is_subtitle;
+};
 
-	return string1.substr( 0, i );
+std::map<RString, tag_debug_info> tag_debug_list;
+
+void dump_bms_tag_debug_info()
+{
+	LOG->Info("BMS tag debug info:");
+	for(std::map<RString, tag_debug_info>::iterator entry= tag_debug_list.begin(); entry != tag_debug_list.end(); ++entry)
+	{
+		if(entry->second.is_subtitle)
+		{
+			LOG->Info("%s is a subtitle.", entry->first.c_str());
+		}
+		else
+		{
+			LOG->Info("%s is %s", entry->first.c_str(), DifficultyToString(entry->second.diff).c_str());
+		}
+	}
+	LOG->Info("BMS tag debug info done.");
 }
 
-static void SearchForDifficulty( RString sTag, Steps *pOut )
+// A tag starts with the first encloser of a pair, and ends with the second. -Kyz
+static RString tag_enclosers= "[]{}()<>--";
+// BMS charts tend to put the subtitle and difficulty in the same kinds of
+// tag enclosers ("[Dear BMSPlayer]", "[LIGHT7]").  For the subtitle, the
+// enclosers need to be preserved, but for the difficulty they need to be
+// stripped. -Kyz
+// Store an index for the encloser so it can be put back on later. -Kyz
+struct tag
 {
-	sTag.MakeLower();
-
-	// Only match "Light" in parentheses.
-	if( sTag.find( "(light" ) != sTag.npos )
+	RString tag;
+	size_t encloser_id;
+};
+static void find_tags_in_string(RString const& str, RString& title, std::vector<tag>& tags)
+{
+	size_t search_start= 0;
+	size_t str_size= str.size();
+	size_t enc_size= tag_enclosers.size();
+	size_t first_tag_start= str_size;
+	while(search_start < str_size)
 	{
-		pOut->SetDifficulty( Difficulty_Easy );
+		size_t tag_start= RString::npos;
+		size_t encloser_id= tag_enclosers.size();
+		while(tag_start == RString::npos && search_start < str_size)
+		{
+			for(size_t enc_id= 0; enc_id < enc_size; enc_id += 2)
+			{
+				if(str[search_start] == tag_enclosers[enc_id])
+				{
+					tag_start= search_start;
+					encloser_id= enc_id;
+					break;
+				}
+			}
+			++search_start;
+		}
+		if(tag_start != RString::npos)
+		{
+			size_t search_end= search_start;
+			size_t tag_end= RString::npos;
+			while(tag_end == RString::npos && search_end < str_size)
+			{
+				if(str[search_end] == tag_enclosers[encloser_id+1])
+				{
+					tag_end= search_end;
+				}
+				++search_end;
+			}
+			if(tag_end != RString::npos)
+			{
+				tags.push_back({str.substr(tag_start, tag_end-tag_start), encloser_id});
+				if(first_tag_start == str_size)
+				{
+					first_tag_start= tag_start;
+				}
+				search_start= search_end;
+			}
+		}
 	}
-	else if( sTag.find( "another" ) != sTag.npos )
-	{
-		pOut->SetDifficulty( Difficulty_Hard );
-	}
-	else if( sTag.find( "(solo)" ) != sTag.npos )
-	{
-		pOut->SetDescription( "Solo" );
-		pOut->SetDifficulty( Difficulty_Edit );
-	}
-
-	LOG->Trace( "Tag \"%s\" is %s", sTag.c_str(), DifficultyToString(pOut->GetDifficulty()).c_str() );
+	title= str.substr(0, first_tag_start);
 }
 
 static void SlideDuplicateDifficulties( Song &p )
@@ -1521,99 +1571,108 @@ bool BMSSongLoader::Load( RString fileName )
 
 }
 
+struct difficulty_tag
+{
+	RString long_name;
+	RString short_name;
+	Difficulty diff;
+};
+
+// Old tag examples, authors unknown:
+// (solo) -- an edit, apparently (Thanks Glenn!)
+// Any of [L7] [L14] (LIGHT7) (LIGHT14) (LIGHT) [L] <LIGHT7> <L7>... you get the idea.
+// [x] [Expert]
+// [A] <A> (A) [ANOTHER] <ANOTHER> (ANOTHER) (ANOTHER7) Another (DP ANOTHER) (Another) -ANOTHER- [A7] [A14] etc etc etc
+// XXX: Can also match (double), but should match [B] or [B7]
+// Other tags I've seen here include (5KEYS) (10KEYS) (7keys) (14keys) (dp) [MIX] [14] (14 Keys Mix)
+// XXX: I'm sure [MIX] means something... anyone know?
+
+std::vector<difficulty_tag> diff_tags;
+
+static bool starts_with(RString& left, RString& right)
+{
+	return left.Left(right.size()) == right;
+}
+
 void BMSSongLoader::AddToSong()
 {
+	static bool diff_tags_init= false;
+	if(!diff_tags_init)
+	{
+		diff_tags.resize(4);
+		diff_tags[0].long_name= "beginner";
+		diff_tags[0].short_name= "b";
+		diff_tags[0].diff= Difficulty_Beginner;
+		diff_tags[1].long_name= "light";
+		diff_tags[1].short_name= "l";
+		diff_tags[1].diff= Difficulty_Easy;
+		diff_tags[2].long_name= "another";
+		diff_tags[2].short_name= "a";
+		diff_tags[2].diff= Difficulty_Hard;
+		diff_tags[3].long_name= "expert";
+		diff_tags[3].short_name= "x";
+		diff_tags[3].diff= Difficulty_Challenge;
+	}
     if( loadedSteps.size() == 0 )
     {
         return;
     }
 
-	RString commonSubstring = "";
+	Song *out = song.GetSong();
 
+	// Old logic: Assume that the part of the title tag that is the same for
+	// all charts is the title and the rest is difficulty tags.
+	// The problem is that BMS charts seem to expect per-chart subtitles.
+	// New logic: Parse the title for each individual chart.  Split it into
+	// title, and tags.  Any tag that doesn't look like difficulty is the
+	// subtitle for that chart.  Since stepmania doesn't have per-chart
+	// subtitles, the chartname field is used.
+	// -Kyz
+	for(size_t sid= 0; sid < loadedSteps.size(); ++sid)
 	{
-		bool found = false;
-		for( unsigned i = 0; i < loadedSteps.size(); i ++ )
+		BMSStepsInfo& step= loadedSteps[sid];
+		std::vector<tag> tags;
+		RString title;
+		find_tags_in_string(step.info.title, title, tags);
+		out->m_sMainTitle= title;
+		for(size_t tid= 0; tid < tags.size(); ++tid)
 		{
-			if( loadedSteps[i].info.title == "" ) continue;
-			if( !found )
+			tag& tag= tags[tid];
+			RString low_tag= (tag.tag);
+			low_tag.MakeLower();
+			bool is_short= low_tag.size() < 4; // 1 letter difficulty, 2 key digits.
+			bool tag_is_subtitle= true;
+			Difficulty tag_diff= Difficulty_Invalid;
+			for(size_t did= 0; did < diff_tags.size(); ++did)
 			{
-				commonSubstring = loadedSteps[i].info.title;
-				found = true;
-			}
-			else
-			{
-				commonSubstring = FindLargestInitialSubstring( commonSubstring, loadedSteps[i].info.title );
-			}
-		}
-		if( commonSubstring == "" )
-		{
-			// All bets are off; the titles don't match at all.
-			// At this rate we're lucky if we even get the title right.
-			LOG->UserLog( "Song", dir, "has BMS files with inconsistent titles." );
-		}
-	}
-
-	if( commonSubstring == "" )
-	{
-		// As said before, all bets are off.
-		// From here on in, it's nothing but guesswork.
-
-		// Try to figure out the difficulty of each file.
-		for( unsigned i = 0; i < loadedSteps.size(); i ++ )
-		{
-			Steps *steps = loadedSteps[i].steps;
-
-			RString title = loadedSteps[i].info.title;
-
-			// XXX: Is this really effective if Common Substring parsing failed?
-			if( title != "" ) SearchForDifficulty( title, steps );
-		}
-	}
-	else
-	{
-		// Now, with our fancy little substring, trim the titles and
-		// figure out where each goes.
-		for( unsigned i = 0; i < loadedSteps.size(); i ++ )
-		{
-			Steps *steps = loadedSteps[i].steps;
-
-			RString title = loadedSteps[i].info.title;
-
-			if( title != "" && title.size() != commonSubstring.size() )
-			{
-				RString tag = title.substr( commonSubstring.size(), title.size() - commonSubstring.size() );
-				tag.MakeLower();
-
-				// XXX: We should do this with filenames too, I have plenty of examples.
-				// however, filenames will be trickier, as stuff at the beginning AND
-				// end change per-file, so we'll need a fancier FindLargestInitialSubstring()
-
-				// XXX: This matches (double), but I haven't seen it used. Again, MORE EXAMPLES NEEDED
-				if( tag.find('l') != tag.npos )
+				difficulty_tag& diff_entry= diff_tags[did];
+				if(starts_with(low_tag, diff_entry.long_name) ||
+					(is_short && starts_with(low_tag, diff_entry.short_name)))
 				{
-					unsigned pos = tag.find('l');
-					if( pos > 2 && tag.substr(pos - 2, 4) == "solo" )
+					tag_is_subtitle= false;
+					tag_diff= diff_entry.diff;
+					// Only use the difficulty tag from the title if the chart didn't
+					// have an explicit difficulty tag. -Kyz
+					if(step.steps->GetDifficulty() == Difficulty_Invalid)
 					{
-						// (solo) -- an edit, apparently (Thanks Glenn!)
-						steps->SetDifficulty( Difficulty_Edit );
+						step.steps->SetDifficulty(diff_entry.diff);
 					}
-					else
-					{
-						// Any of [L7] [L14] (LIGHT7) (LIGHT14) (LIGHT) [L] <LIGHT7> <L7>... you get the idea.
-						steps->SetDifficulty( Difficulty_Easy );
-					}
+					break;
 				}
-				// [x] [Expert]
-				else if( tag.find('x') != tag.npos )
-					steps->SetDifficulty( Difficulty_Challenge );
-				// [A] <A> (A) [ANOTHER] <ANOTHER> (ANOTHER) (ANOTHER7) Another (DP ANOTHER) (Another) -ANOTHER- [A7] [A14] etc etc etc
-				else if( tag.find('a') != tag.npos )
-					steps->SetDifficulty( Difficulty_Hard );
-				// XXX: Can also match (double), but should match [B] or [B7]
-				else if( tag.find('b') != tag.npos )
-					steps->SetDifficulty( Difficulty_Beginner );
-				// Other tags I've seen here include (5KEYS) (10KEYS) (7keys) (14keys) (dp) [MIX] [14] (14 Keys Mix)
-				// XXX: I'm sure [MIX] means something... anyone know?
+			}
+			if(tag_is_subtitle)
+			{
+				RString name= tag_enclosers[tag.encloser_id] + tag.tag + tag_enclosers[tag.encloser_id+1];
+				step.steps->SetChartName(name);
+			}
+
+			std::map<RString, tag_debug_info>::iterator debug_entry= tag_debug_list.find(low_tag);
+			if(debug_entry == tag_debug_list.end())
+			{
+				tag_debug_info new_entry;
+				new_entry.diff= tag_diff;
+				new_entry.is_subtitle= tag_is_subtitle;
+				tag_debug_list.insert(make_pair(low_tag, new_entry));
 			}
 		}
 	}
@@ -1626,14 +1685,10 @@ void BMSSongLoader::AddToSong()
 		if( loadedSteps[i].steps->GetDifficulty() == Difficulty_Medium )
 			mainIndex = i;
 
-	Song *out = song.GetSong();
-
 	{
 		const BMSStepsInfo &main = loadedSteps[mainIndex];
 
 		out->m_sSongFileName = main.steps->GetFilename();
-		if( main.info.title != "" )
-			NotesLoader::GetMainAndSubTitlesFromFullTitle( main.info.title, out->m_sMainTitle, out->m_sSubTitle );
 		out->m_sArtist = main.info.artist;
 		out->m_sGenre = main.info.genre;
 		out->m_sBannerFile = main.info.bannerFile;
@@ -1680,24 +1735,6 @@ void BMSSongLoader::AddToSong()
 		out->m_fMusicSampleStartSeconds = main.info.previewStart;
 		out->m_SongTiming = main.steps->m_Timing;
 	}
-
-	// The brackets before the difficulty are in common substring, so remove them if it's found.
-	if( commonSubstring.size() > 2 && commonSubstring[commonSubstring.size() - 2] == ' ' )
-	{
-		switch( commonSubstring[commonSubstring.size() - 1] )
-		{
-		case '[':
-		case '(':
-		case '<':
-			commonSubstring = commonSubstring.substr(0, commonSubstring.size() - 2);
-		}
-	}
-
-	// Override what that global tag said about the title if we have a good substring.
-	// Prevents clobbering and catches "MySong (7keys)" / "MySong (Another) (7keys)"
-	// Also catches "MySong (7keys)" / "MySong (14keys)"
-	if( commonSubstring != "" )
-		NotesLoader::GetMainAndSubTitlesFromFullTitle( commonSubstring, out->m_sMainTitle, out->m_sSubTitle );
 
 	SlideDuplicateDifficulties( *out );
 

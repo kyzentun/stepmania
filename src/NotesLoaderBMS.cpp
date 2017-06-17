@@ -65,19 +65,19 @@ std::map<RString, tag_debug_info> tag_debug_list;
 
 void dump_bms_tag_debug_info()
 {
-	LOG->Info("BMS tag debug info:");
+	LOG->Special("BMS tag debug info:");
 	for(std::map<RString, tag_debug_info>::iterator entry= tag_debug_list.begin(); entry != tag_debug_list.end(); ++entry)
 	{
 		if(entry->second.is_subtitle)
 		{
-			LOG->Info("%s is a subtitle.", entry->first.c_str());
+			LOG->Special("%s is a subtitle.", entry->first.c_str());
 		}
 		else
 		{
-			LOG->Info("%s is %s", entry->first.c_str(), DifficultyToString(entry->second.diff).c_str());
+			LOG->Special("%s is %s", entry->first.c_str(), DifficultyToString(entry->second.diff).c_str());
 		}
 	}
-	LOG->Info("BMS tag debug info done.");
+	LOG->Special("BMS tag debug info done.");
 }
 
 // A tag starts with the first encloser of a pair, and ends with the second. -Kyz
@@ -98,6 +98,7 @@ static void find_tags_in_string(RString const& str, RString& title, std::vector<
 	size_t str_size= str.size();
 	size_t enc_size= tag_enclosers.size();
 	size_t first_tag_start= str_size;
+	LOG->Special("Tags in title: %s", str.c_str());
 	while(search_start < str_size)
 	{
 		size_t tag_start= RString::npos;
@@ -129,7 +130,12 @@ static void find_tags_in_string(RString const& str, RString& title, std::vector<
 			}
 			if(tag_end != RString::npos)
 			{
-				tags.push_back({str.substr(tag_start, tag_end-tag_start), encloser_id});
+				RString tag_str= str.substr(tag_start, tag_end-tag_start);
+				tag new_entry;
+				new_entry.tag= tag_str;
+				new_entry.encloser_id= encloser_id;
+				LOG->Special("  %s, %c", tag_str.c_str(), tag_enclosers[encloser_id]);
+				tags.push_back(new_entry);
 				if(first_tag_start == str_size)
 				{
 					first_tag_start= tag_start;

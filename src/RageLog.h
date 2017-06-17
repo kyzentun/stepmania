@@ -14,6 +14,8 @@ public:
 	void Info( const char *fmt, ... ) PRINTF(2,3);
 	// Time is purely for writing profiling time data to the time log. -Kyz
 	void Time( const char *fmt, ... ) PRINTF(2,3);
+	// Special is for debugging something specific.  Only one thing should use it in any given build, and only in special debug builds. -Kyz
+	void Special( const char *fmt, ... ) PRINTF(2,3);
 	void UserLog( const RString &sType, const RString &sElement, const char *fmt, ... ) PRINTF(4,5);
 	void Flush();
 

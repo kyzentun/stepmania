@@ -57,9 +57,10 @@ static map<RString, RString> LogMaps;
 #define LOG_PATH	"/Logs/log.txt"
 #define INFO_PATH	"/Logs/info.txt"
 #define TIME_PATH	"/Logs/timelog.txt"
+#define SPECIAL_PATH	"/Logs/special.txt"
 #define USER_PATH	"/Logs/userlog.txt"
 
-static RageFile *g_fileLog, *g_fileInfo, *g_fileUserLog, *g_fileTimeLog;
+static RageFile *g_fileLog, *g_fileInfo, *g_fileUserLog, *g_fileTimeLog, *g_fileSpecialLog;
 
 /* Mutex writes to the files.  Writing to files is not thread-aware, and this is the
  * only place we write to the same file from multiple threads. */
@@ -77,7 +78,8 @@ enum
 
 	/* Whether this line should be loud when written to log.txt (warnings). */
 	WRITE_LOUD = 0x04,
-	WRITE_TO_TIME= 0x08
+	WRITE_TO_TIME= 0x08,
+	WRITE_TO_SPECIAL= 0x10
 };
 
 RageLog::RageLog(): m_bLogToDisk(false), m_bInfoToDisk(false),
@@ -87,9 +89,12 @@ m_bUserLogToDisk(false), m_bFlush(false), m_bShowLogOutput(false)
 	g_fileInfo = new RageFile;
 	g_fileUserLog = new RageFile;
 	g_fileTimeLog = new RageFile;
+	g_fileSpecialLog = new RageFile;
 
 	if(!g_fileTimeLog->Open(TIME_PATH, RageFile::WRITE|RageFile::STREAMED))
 	{ fprintf(stderr, "Couldn't open %s: %s\n", TIME_PATH, g_fileTimeLog->GetError().c_str()); }
+	if(!g_fileSpecialLog->Open(SPECIAL_PATH, RageFile::WRITE|RageFile::STREAMED))
+	{ fprintf(stderr, "Couldn't open %s: %s\n", SPECIAL_PATH, g_fileSpecialLog->GetError().c_str()); }
 	
 	g_Mutex = new RageMutex( "Log" );
 }
@@ -112,11 +117,14 @@ RageLog::~RageLog()
 	g_fileInfo->Close();
 	g_fileUserLog->Close();
 	g_fileTimeLog->Close();
+	g_fileSpecialLog->Close();
 
 	SAFE_DELETE( g_Mutex );
 	SAFE_DELETE( g_fileLog );
 	SAFE_DELETE( g_fileInfo );
 	SAFE_DELETE( g_fileUserLog );
+	SAFE_DELETE( g_fileTimeLog );
+	SAFE_DELETE( g_fileSpecialLog );
 }
 
 void RageLog::SetLogToDisk( bool b )
@@ -239,6 +247,16 @@ void RageLog::Time(const char *fmt, ...)
 	Write(WRITE_TO_TIME, sBuff);
 }
 
+void RageLog::Special(const char *fmt, ...)
+{
+	va_list	va;
+	va_start(va, fmt);
+	RString sBuff = vssprintf(fmt, va);
+	va_end(va);
+
+	Write(WRITE_TO_SPECIAL, sBuff);
+}
+
 void RageLog::UserLog( const RString &sType, const RString &sElement, const char *fmt, ... )
 {
 	va_list va;
@@ -293,6 +311,8 @@ void RageLog::Write( int where, const RString &sLine )
 
 		if(where & WRITE_TO_TIME)
 			g_fileTimeLog->PutLine(sStr);
+		if(where & WRITE_TO_SPECIAL)
+			g_fileSpecialLog->PutLine(sStr);
 
 		AddToRecentLogs( sStr );
 		
@@ -316,6 +336,7 @@ void RageLog::Flush()
 	g_fileLog->Flush();
 	g_fileInfo->Flush();
 	g_fileTimeLog->Flush();
+	g_fileSpecialLog->Flush();
 	g_fileUserLog->Flush();
 }
 

@@ -87,12 +87,12 @@ static RString tag_enclosers= "[]{}()<>--";
 // enclosers need to be preserved, but for the difficulty they need to be
 // stripped. -Kyz
 // Store an index for the encloser so it can be put back on later. -Kyz
-struct tag
+struct bms_tag
 {
 	RString tag;
 	size_t encloser_id;
 };
-static void find_tags_in_string(RString const& str, RString& title, std::vector<tag>& tags)
+static void find_tags_in_string(RString const& str, RString& title, std::vector<bms_tag>& tags)
 {
 	size_t search_start= 0;
 	size_t str_size= str.size();
@@ -131,7 +131,7 @@ static void find_tags_in_string(RString const& str, RString& title, std::vector<
 			if(tag_end != RString::npos)
 			{
 				RString tag_str= str.substr(tag_start, tag_end-tag_start);
-				tag new_entry;
+				bms_tag new_entry;
 				new_entry.tag= tag_str;
 				new_entry.encloser_id= encloser_id;
 				LOG->Special("  %s, %c", tag_str.c_str(), tag_enclosers[encloser_id]);
@@ -1637,13 +1637,13 @@ void BMSSongLoader::AddToSong()
 	for(size_t sid= 0; sid < loadedSteps.size(); ++sid)
 	{
 		BMSStepsInfo& step= loadedSteps[sid];
-		std::vector<tag> tags;
+		std::vector<bms_tag> tags;
 		RString title;
 		find_tags_in_string(step.info.title, title, tags);
 		out->m_sMainTitle= title;
 		for(size_t tid= 0; tid < tags.size(); ++tid)
 		{
-			tag& tag= tags[tid];
+			bms_tag& tag= tags[tid];
 			RString low_tag= (tag.tag);
 			low_tag.MakeLower();
 			bool is_short= low_tag.size() < 4; // 1 letter difficulty, 2 key digits.

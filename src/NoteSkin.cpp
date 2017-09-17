@@ -6,6 +6,8 @@
 #include "RageFileManager.h"
 #include "RageTextureManager.h"
 #include "RageUtil.hpp"
+#include "Model.h"
+#include "Sprite.h"
 #include "XmlFile.h"
 #include "XmlFileUtil.h"
 
@@ -321,7 +323,6 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 	if(lua_istable(L, -1))
 	{
 		found_state_or_texture_map= true;
-		m_use_texture_map= false;
 		if(!m_state_map.load_from_lua(L, lua_gettop(L), insanity_diagnosis))
 		{
 			RETURN_NOT_SANE(insanity_diagnosis);
@@ -343,7 +344,6 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 	if(lua_istable(L, -1))
 	{
 		found_state_or_texture_map= true;
-		m_use_texture_map= true;
 		if(!m_texture_map.load_from_lua(L, lua_gettop(L), insanity_diagnosis))
 		{
 			RETURN_NOT_SANE(insanity_diagnosis);
@@ -381,12 +381,46 @@ bool QuantizedTap::load_from_lua(lua_State* L, int index, string& insanity_diagn
 		RETURN_NOT_SANE("Error loading actor.");
 	}
 	m_actor.Load(act);
+	m_states_used= std::max(m_state_map.get_states_used(), m_inactive_map.get_states_used());
+	recursive_find_parts(act);
 	m_frame.AddChild(m_actor);
 	lua_getfield(L, index, "vivid");
 	m_vivid= lua_toboolean(L, -1);
 #undef RETURN_NOT_SANE
 	lua_settop(L, original_top);
 	return true;
+}
+
+void QuantizedTap::recursive_find_parts(Actor* part)
+{
+	ActorFrame* as_frame= dynamic_cast<ActorFrame*>(part);
+	if(as_frame)
+	{
+		std::vector<Actor*> sub_parts= as_frame->GetChildren();
+		for(auto&& sub : sub_parts)
+		{
+			recursive_find_parts(sub);
+		}
+	}
+	else
+	{
+		Sprite* as_sprite= dynamic_cast<Sprite*>(part);
+		if(as_sprite)
+		{
+			if(as_sprite->GetNumStates() > m_states_used)
+			{
+				m_sprites.push_back(as_sprite);
+			}
+		}
+		else
+		{
+			Model* as_model= dynamic_cast<Model*>(part);
+			if(as_model)
+			{
+				m_models.push_back(part);
+			}
+		}
+	}
 }
 
 QuantizedHold::~QuantizedHold()

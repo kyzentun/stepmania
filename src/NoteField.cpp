@@ -2731,8 +2731,6 @@ void NoteField::apply_base_skin_to_columns()
 	m_right_column_id= 0;
 	double curr_x= (auto_place_width * -.5);
 	// The column needs all of this info.
-	Message pn_msg("PlayerStateSet");
-	pn_msg.SetParam("PlayerNumber", m_pn);
 	Lua* L= LUA->Get();
 	lua_createtable(L, max_column, 0);
 	int column_info_table= lua_gettop(L);
@@ -3420,12 +3418,17 @@ void NoteField::recreate_columns()
 		m_columns.swap(old_columns);
 		m_columns.resize(m_note_data->GetNumTracks());
 	}
+	Message msg("PlayerStateSet");
+	msg.SetParam("PlayerNumber", m_pn);
 	for(size_t i= 0; i < m_columns.size(); ++i)
 	{
-		m_columns[i].set_parent_info(this, i, &m_defective_mods);
+		NoteFieldColumn& col= m_columns[i];
+		col.set_parent_info(this, i, &m_defective_mods);
+		col.set_player_number(m_pn);
+		col.HandleMessage(msg);
 		if(m_in_defective_mode)
 		{
-			m_columns[i].set_defective_mode(m_in_defective_mode);
+			col.set_defective_mode(m_in_defective_mode);
 		}
 	}
 }

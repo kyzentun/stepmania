@@ -385,9 +385,10 @@ void NoteFieldColumn::set_displayed_time(double beat, double second)
 	m_timing_source.curr_second= second;
 	if(!m_noteskins.empty())
 	{
+		float upde= std::max(0.f, float(m_timing_source.second_delta));
 		for(auto&& skin : m_noteskins)
 		{
-			skin->update_taps();
+			skin->update_taps(upde);
 		}
 	}
 	m_curr_beat= beat;
@@ -2604,7 +2605,7 @@ int NoteField::fill_skin_entry_data(field_skin_entry* entry)
 	string insanity;
 	if(!entry->loader->load_into_data(m_steps_type, entry->params, entry->data, insanity))
 	{
-		LuaHelpers::ReportScriptError("Error loading notekin: " + insanity);
+		LuaHelpers::ReportScriptError("Error loading noteskin: " + insanity);
 		entry->data.clear();
 		return FSED_loader_failed;
 	}
@@ -4267,6 +4268,11 @@ struct LunaNoteField : Luna<NoteField>
 		p->share_steps(share_to);
 		COMMON_RETURN_SELF;
 	}
+	static int get_stepstype(T* p, lua_State* L)
+	{
+		Enum::Push(L, p->get_stepstype());
+		return 1;
+	}
 	static int get_columns(T* p, lua_State* L)
 	{
 		p->push_columns_to_lua(L);
@@ -4376,6 +4382,7 @@ struct LunaNoteField : Luna<NoteField>
 		ADD_METHOD(remove_skin);
 		ADD_METHOD(set_steps);
 		ADD_METHOD(share_steps);
+		ADD_METHOD(get_stepstype);
 		ADD_METHOD(get_columns);
 		ADD_METHOD(get_num_columns);
 		ADD_METHOD(get_width);

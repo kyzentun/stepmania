@@ -248,9 +248,9 @@ struct QuantizedTap
 	{
 		m_actor->SetTimingSource(source);
 	}
-	void update()
+	void update(float delta)
 	{
-		m_actor->Update(1.0f);
+		m_actor->Update(delta);
 	}
 	void set_sprites(size_t state)
 	{
@@ -406,7 +406,7 @@ struct QuantizedHold
 struct NoteSkinColumn
 {
 	void set_timing_source(TimingSource* source);
-	void update_taps();
+	void update_taps(float delta);
 	Actor* get_tap_actor(size_t type, double quantization, double beat, bool active, bool reverse);
 	Actor* get_optional_actor(size_t type, double quantization, double beat, bool active, bool reverse);
 	Actor* get_player_tap(size_t type, size_t pn, double beat, bool active, bool reverse);
@@ -583,7 +583,7 @@ struct NoteSkinLoader
 	bool load_from_file(std::string const& path);
 	bool load_from_lua(lua_State* L, int index, std::string const& name,
 		std::string const& path, std::string& insanity_diagnosis);
-	bool supports_needed_buttons(StepsType stype) const;
+	bool supports_needed_buttons(StepsType stype, bool disable_supports_all= false) const;
 	bool push_loader_function(lua_State* L, std::string const& loader) const;
 	bool load_layer_set_into_data(lua_State* L, LuaReference& skin_params,
 		int button_list_index, int stype_index,

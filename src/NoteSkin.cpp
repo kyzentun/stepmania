@@ -573,13 +573,13 @@ void NoteSkinColumn::set_timing_source(TimingSource* source)
 	}
 }
 
-void NoteSkinColumn::update_taps()
+void NoteSkinColumn::update_taps(float delta)
 {
 	for(auto&& tap_set : {&m_taps, &m_reverse_taps})
 	{
 		for(auto&& tap : *tap_set)
 		{
-			tap.update();
+			tap.update(delta);
 		}
 	}
 	for(auto&& tap_set : {&m_optional_taps, &m_reverse_optional_taps})
@@ -588,7 +588,7 @@ void NoteSkinColumn::update_taps()
 		{
 			if(tap != nullptr)
 			{
-				tap->update();
+				tap->update(delta);
 			}
 		}
 	}
@@ -1287,9 +1287,9 @@ static vector<vector<string> > button_lists = {
 	{"DownLeftFoot", "UpLeftFoot", "UpLeftFist", "DownLeftFist", "DownRightFist", "UpRightFist", "UpRightFoot", "DownRightFoot"}
 };
 
-bool NoteSkinLoader::supports_needed_buttons(StepsType stype) const
+bool NoteSkinLoader::supports_needed_buttons(StepsType stype, bool disable_supports_all) const
 {
-	if(m_supports_all_buttons)
+	if(m_supports_all_buttons && !disable_supports_all)
 	{
 		return true;
 	}

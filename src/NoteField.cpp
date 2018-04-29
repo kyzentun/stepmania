@@ -165,6 +165,7 @@ NoteFieldColumn::NoteFieldColumn()
 	 m_receptor_glow(m_mod_manager, "receptor_glow", 0.0),
 	 m_explosion_alpha(m_mod_manager, "explosion_alpha", 1.0),
 	 m_explosion_glow(m_mod_manager, "explosion_glow", 0.0),
+	 m_hold_split_len(m_mod_manager, "hold_split_len", 0.0),
 	 m_selection_start(-1.0), m_selection_end(-1.0),
 	 m_curr_beat(0.0f), m_curr_second(0.0), m_prev_curr_second(-1000.0),
 	 m_pixels_visible_before_beat(128.0f),
@@ -284,7 +285,8 @@ void NoteFieldColumn::set_note_data(const NoteData* note_data,
 				&m_num_upcoming, &m_note_skin_id, &m_layer_skin_id,
 				&m_reverse_offset_pixels, &m_reverse_scale,
 				&m_center_percent, &m_note_alpha, &m_note_glow, &m_receptor_alpha,
-				&m_receptor_glow, &m_explosion_alpha, &m_explosion_glow})
+				&m_receptor_glow, &m_explosion_alpha, &m_explosion_glow,
+				&m_hold_split_len})
 	{
 		moddable->set_column(m_column);
 	}
@@ -781,6 +783,20 @@ struct strip_buffer
 		(*glow_v)= glow;
 		glow_v+= 1;
 	}
+	// In a separate function to allow splitting a hold into unconnected parts
+	// when one triangle pair of the strip would be too long.
+	void draw_both_passes(std::vector<RageTexture*>& textures)
+	{
+		draw(textures);
+		// Intentionally swap the glow back after calling rollback so that
+		// only the set of verts that will remain are swapped.
+		rollback();
+		if(need_glow_pass)
+		{
+			swap_glow();
+		}
+		need_glow_pass= false;
+	}
 	void add_verts(float const tex_y, Rage::Vector3 const& left,
 		Rage::Vector3 const& right, Rage::Color const& color,
 		Rage::Color const& glow, float const tex_left, float const tex_right,
@@ -794,15 +810,7 @@ struct strip_buffer
 		}
 		if(avail() < 4)
 		{
-			draw(textures);
-			// Intentionally swap the glow back after calling rollback so that
-			// only the set of verts that will remain are swapped.
-			rollback();
-			if(need_glow_pass)
-			{
-				swap_glow();
-			}
-			need_glow_pass= false;
+			draw_both_passes(textures);
 		}
 	}
 };
@@ -879,10 +887,10 @@ struct hold_vert_step_state
 	}
 };
 
-void NoteFieldColumn::calc_forward_and_left_for_hold(
+bool NoteFieldColumn::calc_forward_and_left_for_hold(
 	Rage::transform& curr_trans, Rage::transform& next_trans,
 	Rage::Vector3& forward, Rage::Vector3& left,
-	NoteFieldColumn::render_note& note)
+	NoteFieldColumn::render_note& note, float hold_split_len)
 {
 	// pos_z_vec will be used later to orient the hold.  Read below. -Kyz
 	static const Rage::Vector3 pos_z_vec(0.0f, 0.0f, 1.0f);
@@ -890,7 +898,9 @@ void NoteFieldColumn::calc_forward_and_left_for_hold(
 	forward.x= next_trans.pos.x - curr_trans.pos.x;
 	forward.y= next_trans.pos.y - curr_trans.pos.y;
 	forward.z= next_trans.pos.z - curr_trans.pos.z;
-	forward= forward.GetNormalized();
+	float flen = forward.GetLength();
+	bool should_split = hold_split_len > 0.f && flen > hold_split_len;
+	forward= forward * (1.f/flen);
 	if(m_holds_skewed_by_mods)
 	{
 		if(forward.y > 0.f)
@@ -928,6 +938,7 @@ void NoteFieldColumn::calc_forward_and_left_for_hold(
 		RageAARotate(&left, &forward, -curr_trans.rot.y);
 	}
 	left*= (.5 * note.skin->get_width()) * curr_trans.zoom.x;
+	return should_split;
 }
 
 static void calc_left_and_right_verts(
@@ -948,6 +959,7 @@ void NoteFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 {
 	double const original_beat= note.input.eval_beat;
 	double const original_second= note.input.eval_second;
+	float hold_split_len= static_cast<float>(m_hold_split_len.evaluate(note.input));
 	static strip_buffer verts_to_draw;
 	verts_to_draw.init();
 	static const double y_step= 4.0;
@@ -1016,7 +1028,7 @@ void NoteFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 		next_step.calc(start_y + y_step);
 		// Draw the cap before the note.
 		calc_forward_and_left_for_hold(curr_step.trans, next_step.trans,
-			forward, left, note);
+			forward, left, note, hold_split_len);
 		// Reverse the direction of forward because it's positioning the verts
 		// before the head.
 		// Scale it by the y zoom so it matches the note.
@@ -1058,16 +1070,24 @@ void NoteFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 	}
 #define SINGLE_STEP(calc_tex_y, next_y) \
 		next_step.calc(next_y); \
-		calc_forward_and_left_for_hold(curr_step.trans, next_step.trans, \
-			forward, left, note); \
-		calc_left_and_right_verts(left, curr_step.trans.pos, left_vert, \
-			right_vert); \
-		color.a= curr_step.trans.alpha; \
-		glow_color.a= curr_step.trans.glow; \
-		calc_tex_y; \
-		verts_to_draw.add_verts(tex_y, left_vert, right_vert, color, \
-			glow_color, tex_left, tex_right, data.parts); \
-		curr_step= next_step;
+		if(calc_forward_and_left_for_hold(curr_step.trans, next_step.trans, \
+				forward, left, note, hold_split_len)) \
+		{ \
+			verts_to_draw.draw_both_passes(data.parts); \
+			verts_to_draw.init(); \
+			curr_step= next_step; \
+			curr_y+= y_step; \
+		} \
+		else { \
+			calc_left_and_right_verts(left, curr_step.trans.pos, left_vert, \
+				right_vert); \
+			color.a= curr_step.trans.alpha; \
+			glow_color.a= curr_step.trans.glow; \
+			calc_tex_y; \
+			verts_to_draw.add_verts(tex_y, left_vert, right_vert, color, \
+				glow_color, tex_left, tex_right, data.parts); \
+			curr_step= next_step; \
+		}
 #define STEPPING_LOOP(limit, calc_tex_y) \
 	for(double curr_y= start_y; curr_y < limit && \
 				curr_y <= last_y_offset_visible; curr_y+= y_step) \
@@ -1122,7 +1142,9 @@ void NoteFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 			if(first_step > 0.001)
 			{
 				start_y+= first_step;
-				SINGLE_STEP(float tex_y= body_mid_tex_y - (fmod(body_len, data.part_lengths.body_pixels) * tex_per_y), start_y);
+				float tex_y= 0.f;
+				float curr_y= 0.f; // dummy for long hold clipping logic.
+				SINGLE_STEP(tex_y= body_mid_tex_y - (fmod(body_len, data.part_lengths.body_pixels) * tex_per_y), start_y);
 				prev_tex_y= tex_y;
 			}
 			// Cover the jump back to beginning the first body section with
@@ -1170,7 +1192,7 @@ void NoteFieldColumn::draw_hold(QuantizedHoldRenderData& data,
 		curr_step.calc(start_y, true);
 		next_step.calc(start_y + y_step);
 		calc_forward_and_left_for_hold(curr_step.trans, next_step.trans,
-			forward, left, note);
+			forward, left, note, hold_split_len);
 		forward*= data.part_lengths.pixels_after_note *
 			curr_step.trans.zoom.y;
 		color.a= curr_step.trans.alpha;

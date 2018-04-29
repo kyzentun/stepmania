@@ -291,16 +291,18 @@ struct NoteFieldColumn : ActorFrame
 	ModifiableValue m_explosion_alpha;
 	ModifiableValue m_explosion_glow;
 
+	ModifiableValue m_hold_split_len;
+
 	TimingSource m_timing_source;
 
 	double m_selection_start;
 	double m_selection_end;
 
 private:
-	void calc_forward_and_left_for_hold(
+	bool calc_forward_and_left_for_hold(
 		Rage::transform& curr_trans, Rage::transform& next_trans,
 		Rage::Vector3& forward, Rage::Vector3& left,
-		NoteFieldColumn::render_note& note);
+		NoteFieldColumn::render_note& note, float hold_split_len);
 
 	void did_tap_note_internal(TapNoteScore tns, bool bright, float second_offset);
 	void did_hold_note_internal(HoldNoteScore hns, bool bright);

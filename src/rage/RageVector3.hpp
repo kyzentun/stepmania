@@ -29,6 +29,7 @@ public:
 		return x;
 	}
 
+	float GetLength() const;
 	/** @brief Get a normalized version of the vector. */
 	Vector3 GetNormalized() const;
 

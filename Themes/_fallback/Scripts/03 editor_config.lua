@@ -307,7 +307,6 @@ local function editor_menu_options(field, field_name, stepstype)
 	return nesty_menus.add_close_item(items, THEME:GetString("editmode_options", "edit_return"), true)
 end
 
-
 function editor_notefield_menu(menu_actor)
 	menu_actor.Name= "menu"
 	local editor_screen= false
@@ -322,6 +321,33 @@ function editor_notefield_menu(menu_actor)
 	local container= false
 	local menu= setmetatable({}, menu_controller_mt)
 	local sound_actors= false
+
+	local function apply_editor_config(field_conf, field)
+		apply_notefield_prefs_nopn(current_read_bpm, field, field_conf)
+		if field == edit_field then
+			local field_zoom= field_conf.zoom
+			local view_columns= 5
+			local view_height= 448 / field_zoom
+			local vispix= view_height * view_columns / 2
+			local view_width= field:get_width() + 64
+			local scaled_yoff= {'_', {'*', {'+', 'y_offset', view_height/2}, 1/view_height}, 1}
+			for i, col in ipairs(field:get_columns()) do
+				col:set_pixels_visible_before(vispix)
+				col:set_pixels_visible_after(vispix)
+				col:set_permanent_mods{
+					{target= "note_pos_x", {'*', view_width, scaled_yoff}},
+					{target= "note_pos_y", sum_type= '-', {'*', scaled_yoff, view_height}},
+					{target= "hold_split_len", 32},
+				}
+			end
+		else
+			local vispix= 1024 / field_conf.zoom
+			for i, col in ipairs(field:get_columns()) do
+				col:set_pixels_visible_before(vispix)
+				col:set_pixels_visible_after(vispix)
+			end
+		end
+	end
 
 	local prev_mx= INPUTFILTER:GetMouseX()
 	local prev_my= INPUTFILTER:GetMouseY()
@@ -378,12 +404,7 @@ function editor_notefield_menu(menu_actor)
 
 			current_read_bpm= params.read_bpm
 			for field_name, field in pairs(params.fields) do
-				apply_notefield_prefs_nopn(params.read_bpm, field, conf_data[field_name])
-				local vispix= 1024 / conf_data[field_name].zoom
-				for i, col in ipairs(field:get_columns()) do
-					col:set_pixels_visible_before(vispix)
-					col:set_pixels_visible_after(vispix)
-				end
+				apply_editor_config(conf_data[field_name], field)
 			end
 
 			for i, col in ipairs(edit_field:get_columns()) do
@@ -424,12 +445,7 @@ function editor_notefield_menu(menu_actor)
 			in_option_menu= true
 		end,
 		MenuValueChangedMessageCommand= function(self, params)
-			apply_notefield_prefs_nopn(current_read_bpm, current_field, current_field_options)
-			local vispix= 1024 / current_field_options.zoom
-			for i, col in ipairs(current_field:get_columns()) do
-				col:set_pixels_visible_before(vispix)
-				col:set_pixels_visible_after(vispix)
-			end
+			apply_editor_config(current_field_options, current_field)
 		end,
 		menu_actor,
 	}

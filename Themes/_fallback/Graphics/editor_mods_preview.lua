@@ -421,13 +421,13 @@ local frame= Def.ActorFrame{
 			field:set_speed_mod(false, 1)
 		end
 		self:SetUpdateFunction(update)
-		if not get_config().show_preview then
-			self:hibernate(math.huge)
-		end
 		init_keymap()
 		reload_mods()
 		update_size()
 		update_position()
+		if not get_config().show_preview then
+			self:hibernate(math.huge)
+		end
 	end,
 	NoteskinChangedMessageCommand= function(self)
 		local skin_name= editor_config:get_data():get_test_skin_choice(get_current_stepstype(stepstype))

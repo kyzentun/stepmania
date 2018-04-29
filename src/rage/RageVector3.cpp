@@ -42,9 +42,14 @@ Rage::Vector3 & Rage::Vector3::operator/=(float rhs)
 	return *this;
 }
 
+float Rage::Vector3::GetLength() const
+{
+	return std::sqrt( x * x + y * y + z * z );
+}
+
 Rage::Vector3 Rage::Vector3::GetNormalized() const
 {
-	float scale = 1.0f / std::sqrt( x * x + y * y + z * z );
+	float scale = 1.0f / GetLength();
 	return (*this) * scale;
 }
 

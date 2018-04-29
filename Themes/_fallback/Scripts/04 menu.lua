@@ -1054,7 +1054,7 @@ menu_controller_mt= {
 					return sound_ret("page_down")
 				end,
 				page_up= function()
-					active_display:page_down()
+					active_display:page_up()
 					self:update_cursor()
 					return sound_ret("page_up")
 				end,
